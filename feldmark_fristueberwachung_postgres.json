@@ -1,0 +1,699 @@
+{
+  "name": "Feldmark Bank AG — Pfaendung: Fristueberwachung (Postgres)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 7,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "528cba7e-9da1-4412-bd5e-326b9551375c",
+      "name": "Taeglich 07:00 Uhr",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -520,
+        240
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "8f5db34f-e5c2-4ab6-ab9a-424a8cef49c9",
+      "name": "Manuell testen",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT fall_id,\n       aktenzeichen,\n       glaeubiger,\n       schuldner,\n       to_char(zustelldatum, 'YYYY-MM-DD') AS zustelldatum,\n       zustellkanal,\n       status,\n       erinnerungen_gesendet,\n       bearbeiter_email,\n       vertretung_email,\n       vorgesetzte_email\nFROM   feldmark_pfaendung_faelle\nWHERE  status NOT IN ('Erklaerung versandt',\n                      'Abgeschlossen',\n                      'Abgeschlossen mit Fristversaeumnis')\nORDER  BY zustelldatum;",
+        "options": {}
+      },
+      "id": "3dc132cc-0924-489f-b46f-1be388113153",
+      "name": "Offene Faelle laden (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -280,
+        330
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// =====================================================================\n//  Fristberechnung § 840 ZPO  +  Ermittlung des Handlungsbedarfs\n//\n//  Identisch zur Mock-Variante aus Phase 3 — die Regel haengt nicht an\n//  der Datenquelle. Das ist der Punkt: Datenzugriff und Fachlogik sind\n//  getrennt, deshalb war der Wechsel Mock -> Postgres ein Node-Tausch.\n//\n//  Regeln:\n//   - Frist = Zustelldatum + 14 KALENDERtage (nicht Arbeitstage).\n//   - Faellt das Fristende auf Samstag, Sonntag oder Feiertag, verschiebt\n//     es sich auf den naechsten Werktag (§ 222 Abs. 2 ZPO i.V.m. § 193 BGB).\n//   - Erinnerung 1 am Tag des Fristbeginns.\n//   - Erinnerung 2 drei Kalendertage vor Fristende.\n//   - Eskalation an Vorgesetzte + Vertretung einen Tag vor Fristende.\n//   - Bereits gesendete Erinnerungen werden nicht wiederholt (Idempotenz).\n// =====================================================================\n\nconst FRIST_TAGE = 14;\nconst VORLAUF_ERINNERUNG_2 = 3;\nconst VORLAUF_ESKALATION = 1;\nconst STATUS_ERLEDIGT = ['Erklaerung versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis'];\n\n// Feiertage bitte pflegen — hier beispielhaft die bundeseinheitlichen 2026.\nconst FEIERTAGE = [\n  '2026-01-01', '2026-04-03', '2026-04-06', '2026-05-01',\n  '2026-05-14', '2026-05-25', '2026-10-03', '2026-12-25', '2026-12-26',\n];\n\nfunction toDate(s) { return new Date(String(s).slice(0, 10) + 'T00:00:00Z'); }\nfunction iso(d) { return d.toISOString().slice(0, 10); }\nfunction addDays(d, n) { const x = new Date(d); x.setUTCDate(x.getUTCDate() + n); return x; }\nfunction istWerktag(d) {\n  const wd = d.getUTCDay();\n  return wd !== 0 && wd !== 6 && !FEIERTAGE.includes(iso(d));\n}\nfunction naechsterWerktag(d) { let x = new Date(d); while (!istWerktag(x)) x = addDays(x, 1); return x; }\nfunction tageDiff(a, b) { return Math.round((a.getTime() - b.getTime()) / 86400000); }\n\nconst heute = new Date();\nheute.setUTCHours(0, 0, 0, 0);\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  const f = item.json;\n\n  const zustellung = toDate(f.zustelldatum);\n  const fristRoh = addDays(zustellung, FRIST_TAGE);\n  const frist = naechsterWerktag(fristRoh);\n  const restTage = tageDiff(frist, heute);\n\n  // Postgres liefert text[] als Array; leeres Array kommt je nach Treiber\n  // auch als null oder als String '{}' an — deshalb defensiv normalisieren.\n  let gesendet = f.erinnerungen_gesendet;\n  if (typeof gesendet === 'string') {\n    gesendet = gesendet.replace(/[{}\"]/g, '').split(',').filter(Boolean);\n  }\n  if (!Array.isArray(gesendet)) gesendet = [];\n\n  const erledigt = STATUS_ERLEDIGT.includes(f.status);\n\n  let aktion = 'keine';\n  let begruendung = '';\n\n  if (erledigt) {\n    aktion = 'keine';\n    begruendung = 'Erklaerung bereits versandt — Fristueberwachung fuer diesen Fall beendet.';\n  } else if (restTage < 0) {\n    aktion = 'fristversaeumnis';\n    begruendung = `Frist am ${iso(frist)} abgelaufen, Erklaerung nicht versandt.`;\n  } else if (restTage <= VORLAUF_ESKALATION && !gesendet.includes('eskalation')) {\n    aktion = 'eskalation';\n    begruendung = `Noch ${restTage} Tag(e) bis Fristablauf, Erklaerung offen.`;\n  } else if (restTage <= VORLAUF_ERINNERUNG_2 && !gesendet.includes('erinnerung_2')) {\n    aktion = 'erinnerung_2';\n    begruendung = `Noch ${restTage} Tag(e) bis Fristablauf.`;\n  } else if (!gesendet.includes('erinnerung_1')) {\n    aktion = 'erinnerung_1';\n    begruendung = 'Fristbeginn — Fall zur Bearbeitung eingesteuert.';\n  } else {\n    aktion = 'keine';\n    begruendung = `Noch ${restTage} Tag(e) Puffer, faellige Erinnerung bereits versandt.`;\n  }\n\n  out.push({\n    json: {\n      ...f,\n      erinnerungen_gesendet: gesendet,\n      fristende_roh: iso(fristRoh),\n      fristende: iso(frist),\n      fristende_verschoben: iso(frist) !== iso(fristRoh),\n      rest_tage: restTage,\n      heute: iso(heute),\n      aktion,\n      begruendung,\n    },\n  });\n}\n\nreturn out;\n"
+      },
+      "id": "faf95e33-546a-43e0-bc99-1eef0f33b542",
+      "name": "Fristen berechnen (§ 840 ZPO)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        330
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "7ae16eb1-f503-4445-9e40-30bf7b5351c1",
+                    "leftValue": "={{ $json.aktion }}",
+                    "rightValue": "erinnerung_1",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Erinnerung 1"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "110df2cd-0972-48f5-8149-952822e09efb",
+                    "leftValue": "={{ $json.aktion }}",
+                    "rightValue": "erinnerung_2",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Erinnerung 2"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "9f16ee38-1ee6-476a-b78e-9cf5f2c346a6",
+                    "leftValue": "={{ $json.aktion }}",
+                    "rightValue": "eskalation",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Eskalation"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "f6692d03-9268-4378-9ea2-2615d73bf3ca",
+                    "leftValue": "={{ $json.aktion }}",
+                    "rightValue": "fristversaeumnis",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Fristversaeumnis"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "5afd30e0-b3bd-4bcb-b629-71d08329620b",
+                    "leftValue": "={{ $json.aktion }}",
+                    "rightValue": "keine",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Kein Handlungsbedarf"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3afe8899-3572-451d-bf66-c9a47a492d5f",
+      "name": "Handlungsbedarf?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        220,
+        330
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0705439f-89ea-48a6-9991-b759574ae872",
+              "name": "empfaenger",
+              "value": "={{ $json.bearbeiter_email }}, {{ $json.vertretung_email }}",
+              "type": "string"
+            },
+            {
+              "id": "871321ce-9585-4b28-aa75-99be67da0903",
+              "name": "betreff",
+              "value": "=[Pfaendung {{ $json.fall_id }}] Fristbeginn — Erklaerung bis {{ $json.fristende }}",
+              "type": "string"
+            },
+            {
+              "id": "bfb4f28a-8bcd-4537-ad83-bf349d2b8854",
+              "name": "nachricht",
+              "value": "=Fall {{ $json.fall_id }} (Az. {{ $json.aktenzeichen }}, {{ $json.glaeubiger }}) ist am {{ $json.zustelldatum }} ueber {{ $json.zustellkanal }} zugestellt worden.\nDie Drittschuldnererklaerung ist bis zum {{ $json.fristende }} abzugeben ({{ $json.rest_tage }} Tage). Grundlage: § 840 ZPO.\n\n{{ $json.begruendung }}",
+              "type": "string"
+            },
+            {
+              "id": "9ebbb615-c6be-4742-b286-418df6c4b8e9",
+              "name": "prioritaet",
+              "value": "normal",
+              "type": "string"
+            },
+            {
+              "id": "823b923b-3cc8-4dbd-860c-563e7f8e2653",
+              "name": "neuer_status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "0ab0415a-556f-4eba-8278-f6a1344e0742",
+              "name": "erinnerung_marker",
+              "value": "erinnerung_1",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "f8911354-6b49-4332-96e2-08b5d1d2eb0f",
+      "name": "Erinnerung 1 aufbereiten",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        480,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5f7c7c32-7cc3-4f90-8099-2f87ff7ea309",
+              "name": "empfaenger",
+              "value": "={{ $json.bearbeiter_email }}, {{ $json.vertretung_email }}",
+              "type": "string"
+            },
+            {
+              "id": "149aa482-ced4-4d6e-920b-62b2137ec815",
+              "name": "betreff",
+              "value": "=[Pfaendung {{ $json.fall_id }}] Noch {{ $json.rest_tage }} Tage — Frist {{ $json.fristende }}",
+              "type": "string"
+            },
+            {
+              "id": "33462536-be1b-4198-b127-2520a12ef6d1",
+              "name": "nachricht",
+              "value": "=Die Frist zur Abgabe der Drittschuldnererklaerung fuer Fall {{ $json.fall_id }} (Az. {{ $json.aktenzeichen }}) laeuft am {{ $json.fristende }} ab.\nAktueller Status: {{ $json.status }}.\n\nWird die Erklaerung nicht bis morgen versandt, geht automatisch eine Eskalation an die Teamleitung.",
+              "type": "string"
+            },
+            {
+              "id": "5a0d041a-f1e7-4eed-ae8a-e9210a279682",
+              "name": "prioritaet",
+              "value": "hoch",
+              "type": "string"
+            },
+            {
+              "id": "df6b54d6-45bb-4ecc-aa86-8be65eb8a1d4",
+              "name": "neuer_status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "9d5c9802-20a7-4871-bf4b-c042de6d9493",
+              "name": "erinnerung_marker",
+              "value": "erinnerung_2",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "95f0e085-9164-4bd5-b990-721325782055",
+      "name": "Erinnerung 2 aufbereiten",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        480,
+        230
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b94a9852-869a-4ae2-8238-15f2e56fc0c4",
+              "name": "empfaenger",
+              "value": "={{ $json.vorgesetzte_email }}, {{ $json.bearbeiter_email }}, {{ $json.vertretung_email }}",
+              "type": "string"
+            },
+            {
+              "id": "8a5e98bc-872e-4141-ad86-84612aec1412",
+              "name": "betreff",
+              "value": "=[ESKALATION] Pfaendung {{ $json.fall_id }} — Frist {{ $json.fristende }} droht zu reissen",
+              "type": "string"
+            },
+            {
+              "id": "728be44a-4e71-4cae-9e9b-75249d60912a",
+              "name": "nachricht",
+              "value": "=Fall {{ $json.fall_id }} (Az. {{ $json.aktenzeichen }}, {{ $json.glaeubiger }}) hat noch {{ $json.rest_tage }} Tag(e) bis zum Fristablauf und steht auf Status \"{{ $json.status }}\".\n\nBei Fristversaeumnis haftet die Bank nach § 840 Abs. 2 Satz 2 ZPO fuer den entstandenen Schaden. Bitte heute entscheiden, wer die Erklaerung abgibt.",
+              "type": "string"
+            },
+            {
+              "id": "7b6466c3-c0f6-4867-9919-32e7b63f5015",
+              "name": "prioritaet",
+              "value": "kritisch",
+              "type": "string"
+            },
+            {
+              "id": "9eac2435-9426-49a1-bbe6-07c5c857fc0f",
+              "name": "neuer_status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "fc5ed5bc-288b-4adb-81d5-beabf744e319",
+              "name": "erinnerung_marker",
+              "value": "eskalation",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "10073001-bd43-4aa8-94e6-c18b36b1e312",
+      "name": "Eskalation aufbereiten",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        480,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "45a170f3-b49b-4667-a37b-4280771dd99d",
+              "name": "empfaenger",
+              "value": "={{ $json.vorgesetzte_email }}",
+              "type": "string"
+            },
+            {
+              "id": "c57fb7b7-9bc5-42bf-8d97-18d99d3ac8d0",
+              "name": "betreff",
+              "value": "=[FRISTVERSAEUMNIS] Pfaendung {{ $json.fall_id }} — Frist war {{ $json.fristende }}",
+              "type": "string"
+            },
+            {
+              "id": "42c10740-64a4-4af6-8333-724e025f0ed2",
+              "name": "nachricht",
+              "value": "=Die Frist fuer Fall {{ $json.fall_id }} (Az. {{ $json.aktenzeichen }}) ist am {{ $json.fristende }} abgelaufen, ohne dass eine Erklaerung versandt wurde.\nUeberschreitung: {{ Math.abs($json.rest_tage) }} Tag(e).\n\nDieser Eintrag ist der Nachweis fuer die KPI \"Fristeinhaltungsquote\" und zugleich die Grundlage fuer die Haftungspruefung durch Legal.",
+              "type": "string"
+            },
+            {
+              "id": "236bfb3e-22c8-4704-818d-b07619e91cd0",
+              "name": "prioritaet",
+              "value": "kritisch",
+              "type": "string"
+            },
+            {
+              "id": "807e402c-d98b-4adb-a52e-8d78fccf8ab1",
+              "name": "neuer_status",
+              "value": "Abgeschlossen mit Fristversaeumnis",
+              "type": "string"
+            },
+            {
+              "id": "b710cb3f-7606-4297-9dd8-e0ca460e4861",
+              "name": "erinnerung_marker",
+              "value": "fristversaeumnis",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "69d563a4-b3ad-466c-8165-2a72411d6fa1",
+      "name": "Fristversaeumnis dokumentieren",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        480,
+        570
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "2b0975a7-2150-4287-80a5-85271c387672",
+      "name": "Kein Handlungsbedarf",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        480,
+        740
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "a3c25b9b-2306-4960-a3c3-ea5c81b31570",
+      "name": "Versand (Platzhalter)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO feldmark_pfaendung_protokoll\n       (fall_id, ereignis, fristende, rest_tage, empfaenger, prioritaet)\nVALUES ($1, $2, $3::date, $4::int, $5, $6);",
+        "options": {
+          "queryReplacement": "={{ $('Versand (Platzhalter)').item.json.fall_id }}, {{ $('Versand (Platzhalter)').item.json.aktion }}, {{ $('Versand (Platzhalter)').item.json.fristende }}, {{ $('Versand (Platzhalter)').item.json.rest_tage }}, {{ $('Versand (Platzhalter)').item.json.empfaenger }}, {{ $('Versand (Platzhalter)').item.json.prioritaet }}"
+        }
+      },
+      "id": "13be8ff5-f4be-4ec1-ab9e-ce0faa0c0a2c",
+      "name": "Protokoll schreiben (KPI-Basis)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1000,
+        300
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE feldmark_pfaendung_faelle\nSET    erinnerungen_gesendet = array_append(erinnerungen_gesendet, $1),\n       status                = $2,\n       letzte_aktion_am      = now()\nWHERE  fall_id = $3\n  AND  NOT ($1 = ANY (erinnerungen_gesendet))\nRETURNING fall_id, status, erinnerungen_gesendet;",
+        "options": {
+          "queryReplacement": "={{ $('Versand (Platzhalter)').item.json.erinnerung_marker }}, {{ $('Versand (Platzhalter)').item.json.neuer_status }}, {{ $('Versand (Platzhalter)').item.json.fall_id }}"
+        }
+      },
+      "id": "63df3346-8138-431a-ab02-68a727aeb22b",
+      "name": "Status zurueckschreiben (Idempotenz)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1240,
+        300
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "content": "## Phase 3b — Pilot gegen echte Datenquelle\n\nGegenueber der Mock-Variante sind genau **drei Nodes** getauscht:\nDatenquelle, Protokoll und Status-Rueckschreibung sind jetzt echte Postgres-Nodes. Fristlogik und Nachrichtentexte sind unveraendert.\n\n**Vorher einmalig:** `feldmark_pfaendung_schema.sql` in der Datenbank ausfuehren (Tabellen + 6 Testfaelle), dann in beiden Postgres-Nodes die Credential auswaehlen.\n\n**Weiterhin Platzhalter:** der Versand. Dort kommt ein Gmail-, Outlook- oder SMTP-Node hin; `empfaenger`, `betreff` und `nachricht` sind fertig aufbereitet.",
+        "height": 330,
+        "width": 470,
+        "color": 4
+      },
+      "id": "e57f8e18-f421-4879-8858-46ff75190dec",
+      "name": "Sticky Note 9b653c7a",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Warum die Reihenfolge Protokoll -> Status zaehlt\n\nErst wird protokolliert, dann der Marker gesetzt. Bricht der Lauf dazwischen ab, steht ein Protokolleintrag zu viel in der Tabelle und die Erinnerung geht morgen erneut raus — laestig, aber harmlos.\n\nUmgekehrt waere es fatal: Marker gesetzt, aber nie protokolliert und nie versandt. Der Fall gilt dann als erinnert, obwohl niemand etwas bekommen hat. **Bei Teilausfaellen immer in die harmlose Richtung kippen.**",
+        "height": 330,
+        "width": 400,
+        "color": 3
+      },
+      "id": "a5585030-3dc5-44ff-9176-0665c6571163",
+      "name": "Sticky Note 5f45d774",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        950,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Die Idempotenz sitzt an zwei Stellen\n\n1. **Code-Node:** sendet nur, wenn der Marker noch nicht in `erinnerungen_gesendet` steht.\n2. **UPDATE:** `AND NOT ($1 = ANY(erinnerungen_gesendet))` — selbst bei doppeltem Lauf entsteht kein Duplikat im Array.\n\nDoppelte Absicherung ist hier kein Overkill: Punkt 1 schuetzt vor der taeglichen Wiederholung, Punkt 2 vor einem parallelen oder wiederholten Lauf desselben Tages.\n\n**So testest du es:** Workflow zweimal hintereinander ausfuehren. Beim zweiten Mal landen alle Faelle im Ausgang *Kein Handlungsbedarf*.",
+        "height": 300,
+        "width": 400,
+        "color": 5
+      },
+      "id": "253e4f99-a5c9-4b3d-b4c7-48ebbf38b80c",
+      "name": "Sticky Note 4998d33c",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        950,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Offen fuer Legal\n\nDer Workflow rechnet ab `zustelldatum`. Bei Papier ist das der Eingangsstempel, bei eBO der Zustellzeitpunkt aus dem Nachrichtenkopf. Ob beide denselben Fristbeginn ausloesen und wer das Datum verbindlich setzt, muss vor Produktivgang entschieden sein.",
+        "height": 220,
+        "width": 470,
+        "color": 3
+      },
+      "id": "b3771a20-d4b6-4da5-be9b-136005eb5b51",
+      "name": "Sticky Note b1f4df4d",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        620
+      ]
+    }
+  ],
+  "connections": {
+    "Taeglich 07:00 Uhr": {
+      "main": [
+        [
+          {
+            "node": "Offene Faelle laden (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manuell testen": {
+      "main": [
+        [
+          {
+            "node": "Offene Faelle laden (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offene Faelle laden (Postgres)": {
+      "main": [
+        [
+          {
+            "node": "Fristen berechnen (§ 840 ZPO)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fristen berechnen (§ 840 ZPO)": {
+      "main": [
+        [
+          {
+            "node": "Handlungsbedarf?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handlungsbedarf?": {
+      "main": [
+        [
+          {
+            "node": "Erinnerung 1 aufbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Erinnerung 2 aufbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Eskalation aufbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fristversaeumnis dokumentieren",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Kein Handlungsbedarf",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Erinnerung 1 aufbereiten": {
+      "main": [
+        [
+          {
+            "node": "Versand (Platzhalter)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Erinnerung 2 aufbereiten": {
+      "main": [
+        [
+          {
+            "node": "Versand (Platzhalter)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Eskalation aufbereiten": {
+      "main": [
+        [
+          {
+            "node": "Versand (Platzhalter)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fristversaeumnis dokumentieren": {
+      "main": [
+        [
+          {
+            "node": "Versand (Platzhalter)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Versand (Platzhalter)": {
+      "main": [
+        [
+          {
+            "node": "Protokoll schreiben (KPI-Basis)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Protokoll schreiben (KPI-Basis)": {
+      "main": [
+        [
+          {
+            "node": "Status zurueckschreiben (Idempotenz)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "feldmark-pfaendung-pilot"
+  },
+  "tags": []
+}

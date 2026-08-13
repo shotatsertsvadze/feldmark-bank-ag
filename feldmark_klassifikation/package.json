@@ -1,0 +1,29 @@
+{
+  "name": "feldmark_klassifikation",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Klassifikation und Extraktion eingehender Schreiben (Feldmark Bank AG) ueber die Mistral OCR- und Chat-API, mit Fallanlage in Postgres und React-Oberflaeche.",
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "node server/index.js",
+    "dev:client": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 5191"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "heic-convert": "^2.1.0",
+    "multer": "^2.0.0",
+    "pg": "^8.13.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sharp": "^0.35.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^8.2.2",
+    "vite": "^5.4.6"
+  }
+}

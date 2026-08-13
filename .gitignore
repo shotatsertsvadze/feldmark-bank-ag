@@ -1,0 +1,16 @@
+# Referenzkopie aus einem anderen Modul - nicht Teil dieses Projekts
+belegerkennung/
+
+# Node
+node_modules/
+dist/
+
+# Secrets - nie committen
+.env
+.env.local
+
+# Uploads (Laufzeitdaten, keine Quelldateien)
+feldmark_klassifikation/uploads/*
+!feldmark_klassifikation/uploads/.gitkeep
+
+.DS_Store

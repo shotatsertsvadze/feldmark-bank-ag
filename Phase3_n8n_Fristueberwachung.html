@@ -1,0 +1,129 @@
+<!doctype html><html lang="de"><meta charset="utf-8">
+<title>Phase 3 — n8n-Pilot Fristüberwachung</title><style>
+:root{--ink:#1c1c1c;--mut:#5c5c5c;--line:#d8d8d2;--acc:#26357a;--warn:#b3441e;--bg:#faf9f5}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font:16px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+.wrap{max-width:980px;margin:0 auto;padding:48px 28px 90px}
+h1{font-size:30px;line-height:1.25;margin:0 0 6px;letter-spacing:-.01em}
+.sub{color:var(--mut);font-size:15px;margin:0 0 34px}
+h2{font-size:21px;margin:44px 0 12px;padding-top:20px;border-top:1px solid var(--line);letter-spacing:-.01em}
+h3{font-size:16px;margin:26px 0 8px}
+p{margin:0 0 13px}
+code{font:13.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:#efeee8;
+ padding:1.5px 5px;border-radius:3px}
+table{border-collapse:collapse;width:100%;margin:14px 0 20px;font-size:14.5px}
+th{text-align:left;background:#eeede6;padding:9px 11px;border:1px solid var(--line);font-weight:600}
+td{padding:9px 11px;border:1px solid var(--line);vertical-align:top}
+td:first-child{white-space:normal}
+.kb{border-left:3px solid var(--acc);background:#eef1fa;padding:12px 16px;margin:18px 0;font-size:14.5px}
+.kb b{color:var(--acc)}
+.warn{border-left:3px solid var(--warn);background:#fbe9e1;padding:12px 16px;margin:18px 0;font-size:14.5px}
+.warn b{color:var(--warn)}
+ol,ul{margin:0 0 14px;padding-left:22px}
+li{margin:0 0 7px}
+.mono{font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;background:#efeee8;
+ border:1px solid var(--line);border-radius:5px;padding:13px 15px;white-space:pre;overflow-x:auto;margin:12px 0 18px}
+</style>
+<div class="wrap">
+
+<h1>Phase 3 — n8n-Workflow: Fristüberwachung Drittschuldnererklärung</h1>
+<p class="sub">Feldmark Bank AG · Pilot zum Soll-Prozess Pfändung · Datei <code>feldmark_fristueberwachung.json</code> · 15 Nodes, importierbar ohne Zugangsdaten</p>
+
+<h2>Was dieser Pilot abdeckt — und was bewusst nicht</h2>
+<p>Automatisiert ist genau der Strang aus <b>BPMN-Diagramm A</b>, der nach dem parallelen Gateway
+parallel zur Sachbearbeitung läuft: Fristberechnung ab Zustellung, Erinnerung 1 zum Fristbeginn,
+Erinnerung 2 drei Tage vor Ablauf, Eskalation einen Tag vor Ablauf, Dokumentation bei Fristversäumnis.</p>
+<p>Nicht enthalten sind OCR und Dokumentenerkennung, Guthabenprüfung, Sperrbetragslogik,
+die Erstellung der Drittschuldnererklärung selbst sowie alles rund um das P-Konto. Der Ausschluss der
+letzten beiden Punkte ist deine Vorgabe aus der Analyse und gilt hier weiter — der Workflow erinnert
+an die Erklärung, er erstellt sie nicht.</p>
+
+<div class="kb"><b>Kursbezug: Pilotierung / MVP-Zuschnitt.</b> Der richtige erste Automatisierungsschnitt
+ist nicht der fachlich interessanteste, sondern der mit dem besten Verhältnis aus Nutzen, Risiko und
+Integrationsaufwand. Fristüberwachung ist regelbasiert, braucht kein Ermessen, hat eine klare
+Rechtsgrundlage und einen messbaren Effekt (Fristversäumnisquote). Sie fasst keine Kundengelder an —
+falls die Automatisierung falsch liegt, ist die Folge eine überflüssige E-Mail, keine fehlerhafte
+Kontosperre. Genau deshalb steht sie am Anfang und nicht die Guthabenprüfung.</div>
+
+<h2>Architekturentscheidung: täglicher Sweep statt Wait-Nodes</h2>
+<p>Der naheliegende Bau wäre: pro Fall ein Wait-Node, der 11 Tage schläft, dann die Erinnerung sendet.
+Das ist in n8n möglich und in der Produktion falsch. Ein Wait-Node hält eine Execution über die gesamte
+Wartezeit offen. Bei Neustart, Deployment oder Versionswechsel der Instanz ist diese Execution weg —
+ohne Fehlermeldung, ohne Alarm. Der Fall verschwindet still, und niemand merkt es, bis die Frist gerissen ist.</p>
+<p>Der Pilot läuft deshalb <b>zustandslos</b>: einmal täglich um 07:00 Uhr liest er den kompletten offenen
+Fallbestand, berechnet aus den Daten heraus, was heute fällig ist, und handelt. Ein ausgefallener Lauf wird
+vom nächsten automatisch nachgeholt. Der Zustand liegt in der Datenbank, nicht in der Workflow-Engine.</p>
+
+<div class="kb"><b>Kursbezug: Automatisierungsbewertung mit Betriebssicht.</b> Ein Automatisierungsvorschlag
+ist erst dann vollständig, wenn geklärt ist, was bei Ausfall passiert. „Funktioniert im Happy Path“ ist
+kein Bewertungskriterium — „heilt sich nach einem Ausfall selbst“ ist eins.</div>
+
+<h2>Wie die BPMN-Symbole in n8n-Nodes übersetzt sind</h2>
+<table><tr><th>BPMN-Element (Diagramm A)</th><th>n8n-Node</th><th>Umsetzung</th></tr><tr><td>Zwischenereignis Zeit „Frist 14 Tage ab Zustellung“</td><td><code>Fristen berechnen (§ 840 ZPO)</code></td><td>Code-Node. Die Frist wird nicht gewartet, sondern gerechnet: Zustelldatum + 14 Kalendertage, Verschiebung auf den nächsten Werktag nach § 222 Abs. 2 ZPO i.V.m. § 193 BGB.</td></tr><tr><td>Zwischenereignis Zeit „Erinnerung 1 (Fristbeginn)“</td><td><code>Handlungsbedarf? → Ausgang „Erinnerung 1“</code></td><td>Der Sweep prüft täglich, ob der Fall noch offen ist und Erinnerung 1 noch nie versandt wurde.</td></tr><tr><td>Zwischenereignis Zeit „Erinnerung 2 (3 Tage vor Ablauf)“</td><td><code>Handlungsbedarf? → Ausgang „Erinnerung 2“</code></td><td>Bedingung rest_tage ≤ 3 und Marker „erinnerung_2“ noch nicht gesetzt.</td></tr><tr><td>Angeheftetes, nicht-unterbrechendes Zeitereignis „Eskalation“</td><td><code>Handlungsbedarf? → Ausgang „Eskalation“</code></td><td>Nicht-unterbrechend heißt: der Fall läuft normal weiter, zusätzlich geht eine Nachricht an Vorgesetzte und Vertretung. Genau das macht der Zweig — er ändert den Fachstatus nicht.</td></tr><tr><td>Exklusives Gateway „Frist gehalten?“ → Zweig Nein</td><td><code>Handlungsbedarf? → Ausgang „Fristversaeumnis“</code></td><td>rest_tage &lt; 0 und Erklärung nicht versandt. Setzt den Status auf „Abgeschlossen mit Fristversaeumnis“ und dokumentiert den Haftungsfall nach § 840 Abs. 2 S. 2 ZPO.</td></tr><tr><td>Exklusives Gateway „Frist gehalten?“ → Zweig Ja</td><td><code>Handlungsbedarf? → Ausgang „Kein Handlungsbedarf“</code></td><td>Status steht auf „Erklaerung versandt“ — die Überwachung endet für diesen Fall stillschweigend.</td></tr><tr><td>Sendende Aufgabe „Erinnerung versenden“</td><td><code>Versand — hier E-Mail-Node einsetzen</code></td><td>Platzhalter (NoOp), damit der Workflow ohne Zugangsdaten importierbar und lauffähig ist.</td></tr><tr><td>Datenobjekt „Fallakte“</td><td><code>Fallliste laden (Mock) / Status-Update</code></td><td>Lesender und schreibender Zugriff auf das Case-Management-System, hier durch Mock bzw. NoOp ersetzt.</td></tr></table>
+<p>Der wichtigste Übersetzungsschritt: In BPMN <i>wartet</i> ein Zeitereignis. In einem zustandslosen
+Sweep gibt es kein Warten — die Fälligkeit wird bei jedem Lauf neu aus <code>zustelldatum</code>,
+<code>status</code> und <code>erinnerungen_gesendet</code> abgeleitet. Das Verhalten nach außen ist
+identisch, die Betriebseigenschaften sind deutlich besser.</p>
+
+<h2>Import und Test — vier Schritte</h2>
+<ol>
+<li>In n8n oben rechts auf <b>„…“ → Import from File“</b> und die Datei
+    <code>feldmark_fristueberwachung.json</code> auswählen.</li>
+<li>Den Node <b>„Manuell testen“</b> anklicken und <b>„Execute Workflow“</b> drücken. Es werden keine
+    Zugangsdaten abgefragt — Datenquelle und Versand sind Platzhalter.</li>
+<li>Auf den Node <b>„Handlungsbedarf?“</b> klicken. Du siehst fünf Ausgänge, und jeder Ausgang hat
+    mindestens einen Fall. Die Mock-Daten sind relativ zum heutigen Datum gerechnet, deshalb feuern alle
+    Zweige unabhängig davon, wann du importierst.</li>
+<li>In den vier Set-Nodes siehst du die fertig formulierten Nachrichten inklusive berechnetem Fristende,
+    Restlaufzeit und Begründung.</li>
+</ol>
+
+<h3>Was der Testlauf zeigen muss</h3>
+<table><tr><th>Fall</th><th>Zustellung</th><th>Ausgangslage</th><th>Erwarteter Ausgang</th></tr><tr><td>PF-2026-0481</td><td>heute zugestellt</td><td>offen</td><td>Erinnerung 1</td></tr><tr><td>PF-2026-0463</td><td>vor 11 Tagen</td><td>offen</td><td>Erinnerung 2</td></tr><tr><td>PF-2026-0455</td><td>vor 13 Tagen</td><td>offen</td><td>Eskalation</td></tr><tr><td>PF-2026-0440</td><td>vor 17 Tagen</td><td>offen</td><td>Fristversäumnis</td></tr><tr><td>PF-2026-0470</td><td>vor 5 Tagen</td><td>Erklärung versandt</td><td>kein Handlungsbedarf</td></tr><tr><td>PF-2026-0462</td><td>vor 8 Tagen</td><td>Erinnerung 1 bereits gesendet</td><td>kein Handlungsbedarf</td></tr></table>
+
+<div class="kb"><b>Kursbezug: Testfallentwurf aus der Regel, nicht aus den Daten.</b> Die sechs Mock-Fälle
+sind nicht zufällig — sie sind je ein Vertreter pro Entscheidungspfad, plus zwei Negativfälle
+(erledigt / bereits erinnert). Damit ist die Regelkaskade vollständig abgedeckt. Wenn du die Regeln später
+änderst, ändern sich zuerst die Testfälle.</div>
+
+<h2>Was vor dem Produktivgang ersetzt werden muss</h2>
+<table><tr><th>Node / Stelle</th><th>Ersetzen durch</th><th>Warum</th></tr><tr><td><code>Fallliste laden (Mock)</code></td><td>Postgres-, MySQL- oder HTTP-Request-Node gegen euer Case-Management-System.</td><td>Die Feldnamen im Mock sind die Schnittstelle — wenn die Query dieselben Felder liefert, läuft der Rest unverändert weiter.</td></tr><tr><td><code>Versand — hier E-Mail-Node einsetzen</code></td><td>Gmail-, Microsoft-Outlook- oder SMTP-Node.</td><td>empfaenger, betreff und nachricht sind bereits fertig aufbereitet und müssen nur gemappt werden.</td></tr><tr><td><code>Status-Update — hier DB-Node einsetzen</code></td><td>Schreibender DB-Node: erinnerung_marker an erinnerungen_gesendet anhängen, neuer_status setzen.</td><td>Ohne diesen Schritt gibt es keine Idempotenz — der Sweep würde dieselbe Erinnerung jeden Tag neu senden. Das ist der einzige Punkt, an dem der Pilot ohne Nacharbeit fachlich falsch wird.</td></tr><tr><td><code>FEIERTAGE im Code-Node</code></td><td>Feiertagsliste des zuständigen Bundeslandes, jährlich gepflegt oder per API.</td><td>Aktuell nur die bundeseinheitlichen Feiertage 2026 als Beispiel.</td></tr></table>
+
+<div class="warn"><b>Der kritische Punkt: Idempotenz.</b> Solange der Node
+<code>Status-Update</code> ein NoOp bleibt, wird <code>erinnerungen_gesendet</code> nie fortgeschrieben.
+Der Sweep würde dieselbe Erinnerung an jedem Folgetag erneut versenden. Der Pilot ist also zum Vorführen
+und Testen fertig, für den Produktivbetrieb fehlt genau dieser eine schreibende Schritt.</div>
+
+<h2>Die Fristlogik im Detail</h2>
+<div class="mono">Frist        = Zustelldatum + 14 Kalendertage        (§ 840 Abs. 1 ZPO)
+Fällt das Fristende auf Sa/So/Feiertag:
+             → nächster Werktag                     (§ 222 Abs. 2 ZPO i.V.m. § 193 BGB)
+
+rest_tage    = Fristende − heute
+
+Kaskade (erste zutreffende Regel gewinnt):
+  Status erledigt                                → keine
+  rest_tage &lt; 0                                  → fristversaeumnis
+  rest_tage ≤ 1  und Eskalation nicht gesendet    → eskalation
+  rest_tage ≤ 3  und Erinnerung 2 nicht gesendet  → erinnerung_2
+  Erinnerung 1 nicht gesendet                     → erinnerung_1
+  sonst                                          → keine</div>
+<p>Die Reihenfolge der Kaskade ist bewusst so gewählt: Ein Fall, der drei Tage vor Ablauf steht, erfüllt
+gleichzeitig die Bedingung für Erinnerung 2 und – falls Erinnerung 1 nie lief – auch die für Erinnerung 1.
+Es soll aber nur die dringlichere Nachricht rausgehen. Deshalb wird von oben nach unten geprüft und beim
+ersten Treffer abgebrochen.</p>
+
+<div class="warn"><b>Offener Punkt für Legal.</b> Der Pilot rechnet die Frist ab dem Datum, das im System
+als <code>zustelldatum</code> steht. Bei Postzustellung ist das der Eingangsstempel, bei eBO der
+Zustellzeitpunkt aus dem Nachrichtenkopf. Ob beide Kanäle denselben Fristbeginn auslösen und wer das
+Zustelldatum verbindlich setzt, muss vor Produktivgang festgeschrieben werden — sonst automatisiert der
+Workflow eine Rechtsfrage, die vorher niemand entschieden hat.</div>
+
+<h2>Was nach dem Piloten kommt</h2>
+<p>Der Workflow liefert nebenbei die Datenbasis für die KPI aus dem Soll-Konzept: jede Eskalation und
+jedes Fristversäumnis ist ein zählbares Ereignis mit Fall-ID und Datum. Nach vier bis sechs Wochen
+Parallelbetrieb lässt sich damit die Fristversäumnisquote gegen die Baseline messen — das ist die
+Grundlage, um den nächsten Automatisierungsschritt zu begründen statt ihn zu behaupten.</p>
+
+</div></html>

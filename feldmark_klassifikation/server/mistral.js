@@ -1,0 +1,339 @@
+/**
+ * Klassifikation und Extraktion eingehender Schreiben ueber die Mistral-API
+ * - zwei Schritte, analog belegerkennung/server/mistral.js:
+ *
+ * 1. OCR (POST /v1/ocr, Modell mistral-ocr-latest) liest das Schreiben
+ *    (Bild oder PDF) als Rohtext aus.
+ * 2. Klassifikation + Extraktion (POST /v1/chat/completions, JSON-Mode) in
+ *    einem Aufruf - kein separater Klassifikations-Schritt vor der
+ *    Extraktion, siehe klassifikations_schema.md: das Modell leitet den Typ
+ *    ohnehin aus demselben Volltextverstaendnis ab, das auch die Felder
+ *    liefert.
+ *
+ * Schema, System-Prompt und Konfidenz-/Plausibilitaets-Schwellen sind
+ * 1:1 aus klassifikations_schema.md uebernommen.
+ */
+
+const MISTRAL_API_BASE = "https://api.mistral.ai/v1";
+const OCR_MODEL = "mistral-ocr-latest";
+const EXTRAKTIONS_MODEL = process.env.MISTRAL_EXTRAKTIONS_MODELL || "mistral-small-latest";
+
+const ERLAUBTE_DOKUMENTTYPEN = [
+  "pfaendungsschreiben",
+  "auskunftsersuchen",
+  "einziehungsverfuegung",
+  "ueberweisungsverfuegung",
+  "erinnerungsschreiben",
+  "sonstiges",
+];
+
+function apiKey() {
+  const key = process.env.MISTRAL_API_KEY;
+  if (!key) throw new Error("MISTRAL_API_KEY fehlt in der Umgebung (.env).");
+  return key;
+}
+
+/**
+ * Ruft die Mistral OCR API fuer ein einzelnes Dokument auf.
+ * Unveraendert uebernommen aus belegerkennung - gleiche API, gleicher Bedarf.
+ * @param {Buffer} bytes Dateiinhalt.
+ * @param {string} mimeType z.B. "image/png" oder "application/pdf".
+ * @returns {Promise<{markdown:string, seiten:number, ocr_confidence:{durchschnitt:number,minimum:number}|null}>}
+ */
+export async function ocrDokument(bytes, mimeType) {
+  const dataUrl = `data:${mimeType};base64,${bytes.toString("base64")}`;
+  const document =
+    mimeType === "application/pdf"
+      ? { type: "document_url", document_url: dataUrl }
+      : { type: "image_url", image_url: dataUrl };
+
+  const antwort = await fetch(`${MISTRAL_API_BASE}/ocr`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: OCR_MODEL,
+      document,
+      confidence_scores_granularity: "word",
+    }),
+  });
+
+  if (!antwort.ok) {
+    const text = await antwort.text().catch(() => "");
+    throw new Error(`Mistral OCR antwortete mit HTTP ${antwort.status}: ${text.slice(0, 500)}`);
+  }
+
+  const daten = await antwort.json();
+  const seiten = daten.pages || [];
+  if (!seiten.length) throw new Error("Mistral OCR lieferte keine Seite zurueck.");
+
+  const markdown = seiten.map((s) => s.markdown || "").join("\n\n---\n\n");
+
+  const confidences = seiten
+    .map((s) => s.confidence_scores?.average_page_confidence_score)
+    .filter((v) => typeof v === "number");
+  const minima = seiten
+    .map((s) => s.confidence_scores?.minimum_page_confidence_score)
+    .filter((v) => typeof v === "number");
+
+  return {
+    markdown,
+    seiten: seiten.length,
+    ocr_confidence: confidences.length
+      ? {
+          durchschnitt: Math.round((confidences.reduce((a, v) => a + v, 0) / confidences.length) * 1000) / 10,
+          minimum: Math.round(Math.min(...minima) * 1000) / 10,
+        }
+      : null,
+  };
+}
+
+const JSON_SCHEMA = `{
+  "dokumenttyp": "pfaendungsschreiben | auskunftsersuchen | einziehungsverfuegung | ueberweisungsverfuegung | erinnerungsschreiben | sonstiges",
+  "konfidenz_typ": 0,
+  "plausibilitaet_ok": true,
+  "plausibilitaet_begruendung": "string, 1 Satz",
+
+  "kopf": {
+    "ausstellende_stelle": null,
+    "aktenzeichen": null,
+    "ausstellungsdatum": null,
+    "empfaenger_bezeichnung": null,
+    "rechtsgrundlage": []
+  },
+
+  "pfaendung": {
+    "glaeubiger_name": null,
+    "glaeubiger_vertretung": null,
+    "schuldner_name": null,
+    "vollstreckungstitel_aktenzeichen": null,
+    "vollstreckungstitel_datum": null,
+    "forderung_hauptforderung_eur": null,
+    "forderung_zinsen_prozent": null,
+    "forderung_kosten_eur": null,
+    "forderung_gesamt_eur": null,
+    "drittschuldner_bezeichnung": null,
+    "konfidenz_betrag": 0
+  },
+
+  "auskunftsersuchen": {
+    "betroffene_person_name": null,
+    "betroffene_person_geburtsdatum": null,
+    "tatvorwurf": null,
+    "angefragte_punkte": [],
+    "antwortfrist_tage": null,
+    "vertraulich": false
+  },
+
+  "erinnerung": {
+    "bezug_aktenzeichen": null,
+    "hinweis_text": null
+  },
+
+  "rohtext_auszug": "string, erste 300 Zeichen - fuer die Sichtpruefungsmaske bei niedriger Konfidenz"
+}`;
+
+const SYSTEM_PROMPT = `Du bist Klassifikations- und Extraktionsassistent im Kontenservice der
+Feldmark Bank AG. Du bekommst den vollstaendigen OCR-Text eines eingehenden
+Schreibens (Scan oder E-Mail-Anhang).
+
+Aufgabe:
+1. Ordne das Dokument genau einem der sechs Typen zu: pfaendungsschreiben,
+   auskunftsersuchen, einziehungsverfuegung, ueberweisungsverfuegung,
+   erinnerungsschreiben, sonstiges.
+2. Fuelle nur die Felder, die zum erkannten Typ gehoeren, aus dem
+   JSON-Schema aus.
+3. Trage ausschliesslich das ein, was woertlich oder eindeutig im Text
+   steht. Erfinde, schaetze oder ergaenze keine Werte. Unklare oder fehlende
+   Angaben bleiben null. Fuer kopf.aktenzeichen gilt das besonders streng:
+   nimm ausschliesslich den Wert, der direkt einem Label wie "Aktenzeichen:",
+   "Az.:" oder "Geschaeftszeichen:" folgt. Steht dort nichts, ist der Wert
+   null - nimm niemals eine Ueberschrift, einen Dokumenttitel oder eine
+   Paragraphenangabe als Aktenzeichen.
+4. Pruefe die Plausibilitaet: Passt der Inhalt wirklich zu einer bankbezogenen
+   Vollstreckungs- oder Ermittlungsangelegenheit? Fehlen zentrale Anker
+   (Aktenzeichen, Bezug auf ein Konto oder einen Kunden, erkennbare
+   Vollstreckungs-/Ermittlungsbehoerde als Absender), setze
+   plausibilitaet_ok auf false und dokumenttyp auf sonstiges - auch wenn
+   ein Begriff wie "Auskunftsersuchen" im Text vorkommt.
+5. Vergib konfidenz_typ und konfidenz_betrag ehrlich und konservativ.
+   Ein Wert ueber 90 bedeutet: du bist dir wirklich sicher, nicht nur,
+   dass es wahrscheinlich stimmt. Bei Scan-Artefakten, unklarer
+   Handschrift oder mehrdeutigen Zahlen: Wert senken, nicht raten.
+6. Gib niemals ein Zustelldatum an - dieses Feld existiert absichtlich
+   nicht im Schema.
+
+Antworte AUSSCHLIESSLICH mit einem JSON-Objekt genau nach diesem Schema
+(Werte sind Beispiele fuer den erwarteten Typ, keine Vorgaben):
+${JSON_SCHEMA}`;
+
+// Zeichengrenze fuer den Chat-Aufruf. Dokumente darueber werden gekuerzt -
+// das Modell sieht dann nicht den ganzen Text, kann das aber nicht wissen
+// und meldet fehlende Felder ununterscheidbar von "steht wirklich nicht
+// im Dokument". klassifiziereUndExtrahiere() haengt deshalb ein eigenes,
+// vom Code (nicht vom Modell) gesetztes wurde_gekuerzt-Flag an, das
+// bestimmeRouting() unten fuer den Pfaendungsblock hart auf Sichtpruefung
+// zwingt.
+const MAX_MARKDOWN_ZEICHEN = 12000;
+
+/**
+ * Klassifiziert und extrahiert in einem Aufruf. Wirft bei ungueltiger
+ * Modellantwort statt eine erfundene Struktur zurueckzugeben - analog
+ * extrahiereFelder() in belegerkennung.
+ * @param {string} markdown OCR-Rohtext.
+ * @param {{durchschnitt:number,minimum:number}|null} ocrConfidence Aus
+ *   ocrDokument() - wird dem Modell als Kontext mitgegeben, damit eine
+ *   objektiv unsichere Zeichenerkennung nicht nur indirekt (ueber
+ *   verstuemmelten Text) in die Selbsteinschaetzung einfliesst.
+ */
+export async function klassifiziereUndExtrahiere(markdown, ocrConfidence = null) {
+  const wurdeGekuerzt = markdown.length > MAX_MARKDOWN_ZEICHEN;
+  const ocrHinweis = ocrConfidence
+    ? `OCR-Gesamtkonfidenz: ${ocrConfidence.durchschnitt}%, Minimum: ${ocrConfidence.minimum}%\n\n---\n\n`
+    : "";
+
+  const antwort = await fetch(`${MISTRAL_API_BASE}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: EXTRAKTIONS_MODEL,
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: ocrHinweis + markdown.slice(0, MAX_MARKDOWN_ZEICHEN) },
+      ],
+    }),
+  });
+
+  if (!antwort.ok) {
+    const text = await antwort.text().catch(() => "");
+    throw new Error(`Mistral Chat (Klassifikation) antwortete mit HTTP ${antwort.status}: ${text.slice(0, 500)}`);
+  }
+
+  const daten = await antwort.json();
+  const inhalt = daten.choices?.[0]?.message?.content;
+  if (!inhalt) throw new Error("Mistral Chat lieferte keine Klassifikation zurueck.");
+
+  let klassifikation;
+  try {
+    klassifikation = JSON.parse(inhalt);
+  } catch {
+    throw new Error("Mistral Chat lieferte kein gueltiges JSON fuer die Klassifikation.");
+  }
+
+  if (!ERLAUBTE_DOKUMENTTYPEN.includes(klassifikation.dokumenttyp)) {
+    throw new Error(
+      `Mistral Chat lieferte einen unbekannten dokumenttyp: "${klassifikation.dokumenttyp}".`
+    );
+  }
+
+  // Fehlende Unterbloecke defensiv mit den Schema-Nullwerten auffuellen,
+  // falls das Modell einen fuer den Typ nicht relevanten Block ganz
+  // wegliess statt ihn (wie im Prompt verlangt) auf null zu lassen.
+  klassifikation.kopf ??= {
+    ausstellende_stelle: null,
+    aktenzeichen: null,
+    ausstellungsdatum: null,
+    empfaenger_bezeichnung: null,
+    rechtsgrundlage: [],
+  };
+  klassifikation.pfaendung ??= {
+    glaeubiger_name: null,
+    glaeubiger_vertretung: null,
+    schuldner_name: null,
+    vollstreckungstitel_aktenzeichen: null,
+    vollstreckungstitel_datum: null,
+    forderung_hauptforderung_eur: null,
+    forderung_zinsen_prozent: null,
+    forderung_kosten_eur: null,
+    forderung_gesamt_eur: null,
+    drittschuldner_bezeichnung: null,
+    konfidenz_betrag: 0,
+  };
+  klassifikation.auskunftsersuchen ??= {
+    betroffene_person_name: null,
+    betroffene_person_geburtsdatum: null,
+    tatvorwurf: null,
+    angefragte_punkte: [],
+    antwortfrist_tage: null,
+    vertraulich: false,
+  };
+  klassifikation.erinnerung ??= { bezug_aktenzeichen: null, hinweis_text: null };
+  klassifikation.wurde_gekuerzt = wurdeGekuerzt;
+
+  return klassifikation;
+}
+
+// Konfidenz-Schwellen aus klassifikations_schema.md - Startwerte, noch
+// nicht anhand echter Testlaeufe kalibriert (siehe "Offene Punkte" dort).
+// SCHWELLE_OCR_KONFIDENZ ist genauso ein ungemessener Startwert und gehoert
+// in denselben spaeteren Kalibrierungs-Durchlauf.
+const SCHWELLE_KONFIDENZ_TYP = 70;
+const SCHWELLE_KONFIDENZ_BETRAG = 85;
+const SCHWELLE_OCR_KONFIDENZ = 60;
+export const PFAENDUNGSBLOCK_TYPEN = ["pfaendungsschreiben", "einziehungsverfuegung", "ueberweisungsverfuegung"];
+
+/**
+ * Reine Routing-Entscheidung nach der Tabelle in klassifikations_schema.md,
+ * erweitert um zwei Regeln aus der Prozessanalyse:
+ *  - Wurde der OCR-Text vor dem Chat-Aufruf gekuerzt, koennen Felder im
+ *    Pfaendungsblock nicht als "sicher nicht vorhanden" gelten - Zwang zur
+ *    Sichtpruefung statt eines stillen Datenverlusts.
+ *  - Eine niedrige OCR-Zeichenerkennungssicherheit (objektives Signal,
+ *    unabhaengig von der Modell-Selbsteinschaetzung) erzwingt ebenfalls
+ *    Sichtpruefung.
+ *
+ * Die Erinnerungsschreiben-Regel ("bezug_aktenzeichen nicht im Bestand
+ * auffindbar") braucht einen DB-Abgleich - der Aufrufer (server/index.js)
+ * fuehrt den vorher aus und uebergibt das Ergebnis. Ohne Angabe (Parameter
+ * weggelassen) wird konservativ von "nicht gefunden" ausgegangen.
+ */
+export function bestimmeRouting(
+  klassifikation,
+  { bezugAktenzeichenGefunden = false, ocrConfidence = null } = {}
+) {
+  const gruende = [];
+  let pfad = "autofall";
+
+  if (klassifikation.konfidenz_typ < SCHWELLE_KONFIDENZ_TYP) {
+    pfad = "sichtpruefung";
+    gruende.push(`konfidenz_typ (${klassifikation.konfidenz_typ}) unter Schwelle ${SCHWELLE_KONFIDENZ_TYP}`);
+  }
+  if (klassifikation.plausibilitaet_ok === false) {
+    pfad = "sichtpruefung";
+    gruende.push("plausibilitaet_ok = false");
+  }
+  if (klassifikation.dokumenttyp === "sonstiges") {
+    pfad = "sichtpruefung";
+    gruende.push("dokumenttyp = sonstiges, nie Autofall");
+  }
+  if (klassifikation.dokumenttyp === "erinnerungsschreiben" && !bezugAktenzeichenGefunden) {
+    pfad = "sichtpruefung";
+    gruende.push("erinnerungsschreiben: bezug_aktenzeichen nicht im Bestand auffindbar");
+  }
+  if (klassifikation.wurde_gekuerzt && PFAENDUNGSBLOCK_TYPEN.includes(klassifikation.dokumenttyp)) {
+    pfad = "sichtpruefung";
+    gruende.push("Dokument wurde vor der Klassifikation gekuerzt - fehlende Felder nicht verlaesslich");
+  }
+  if (ocrConfidence && ocrConfidence.minimum < SCHWELLE_OCR_KONFIDENZ) {
+    pfad = "sichtpruefung";
+    gruende.push(`ocr_confidence.minimum (${ocrConfidence.minimum}) unter Schwelle ${SCHWELLE_OCR_KONFIDENZ}`);
+  }
+
+  const vierAugenErforderlich =
+    PFAENDUNGSBLOCK_TYPEN.includes(klassifikation.dokumenttyp) &&
+    klassifikation.pfaendung?.konfidenz_betrag < SCHWELLE_KONFIDENZ_BETRAG;
+  if (vierAugenErforderlich) {
+    gruende.push(
+      `konfidenz_betrag (${klassifikation.pfaendung?.konfidenz_betrag}) unter Schwelle ${SCHWELLE_KONFIDENZ_BETRAG}`
+    );
+  }
+
+  return { pfad, vier_augen_erforderlich: vierAugenErforderlich, gruende };
+}

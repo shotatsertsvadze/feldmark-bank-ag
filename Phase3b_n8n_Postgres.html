@@ -1,0 +1,158 @@
+<!doctype html><html lang="de"><meta charset="utf-8">
+<title>Phase 3b — Pilot gegen Postgres</title><style>
+:root{--ink:#1c1c1c;--mut:#5c5c5c;--line:#d8d8d2;--acc:#26357a;--warn:#b3441e;--ok:#2f6b3c;--bg:#faf9f5}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font:16px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+.wrap{max-width:980px;margin:0 auto;padding:48px 28px 90px}
+h1{font-size:30px;line-height:1.25;margin:0 0 6px;letter-spacing:-.01em}
+.sub{color:var(--mut);font-size:15px;margin:0 0 34px}
+h2{font-size:21px;margin:44px 0 12px;padding-top:20px;border-top:1px solid var(--line);letter-spacing:-.01em}
+h3{font-size:16px;margin:26px 0 8px}
+p{margin:0 0 13px}
+code{font:13.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:#efeee8;
+ padding:1.5px 5px;border-radius:3px}
+table{border-collapse:collapse;width:100%;margin:14px 0 20px;font-size:14.5px}
+th{text-align:left;background:#eeede6;padding:9px 11px;border:1px solid var(--line);font-weight:600}
+td{padding:9px 11px;border:1px solid var(--line);vertical-align:top}
+.kb{border-left:3px solid var(--acc);background:#eef1fa;padding:12px 16px;margin:18px 0;font-size:14.5px}
+.kb b{color:var(--acc)}
+.warn{border-left:3px solid var(--warn);background:#fbe9e1;padding:12px 16px;margin:18px 0;font-size:14.5px}
+.warn b{color:var(--warn)}
+.ok{border-left:3px solid var(--ok);background:#e9f2ea;padding:12px 16px;margin:18px 0;font-size:14.5px}
+.ok b{color:var(--ok)}
+ol,ul{margin:0 0 14px;padding-left:22px}
+li{margin:0 0 7px}
+.mono{font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;background:#efeee8;
+ border:1px solid var(--line);border-radius:5px;padding:13px 15px;white-space:pre;overflow-x:auto;margin:12px 0 18px}
+</style>
+<div class="wrap">
+
+<h1>Phase 3b — Fristüberwachungs-Pilot gegen echte Datenbank</h1>
+<p class="sub">Feldmark Bank AG · <code>feldmark_fristueberwachung_postgres.json</code> (17 Nodes) + <code>feldmark_pfaendung_schema.sql</code> · Idempotenz läuft jetzt wirklich</p>
+
+<p>Der Mock-Pilot aus Phase 3 hat gezeigt, dass die Regel stimmt. Was er nicht zeigen konnte:
+dass sie sich auch beim zweiten Lauf richtig verhält. Genau das ist jetzt drin — der Workflow liest
+aus Postgres, schreibt zurück und wiederholt sich deshalb nicht.</p>
+
+<div class="ok"><b>Vorab getestet.</b> Ich habe das Schema und den Workflow gegen eine echte
+PostgreSQL-16-Instanz durchlaufen lassen: SELECT, Fristlogik, Protokoll-INSERT und Status-UPDATE,
+zweimal hintereinander. Ergebnisse stehen weiter unten. Das SQL ist also nicht nur plausibel,
+sondern geprüft.</div>
+
+<h2>Was sich gegenüber dem Mock-Piloten geändert hat</h2>
+<table><tr><th>Vorher</th><th>Jetzt</th><th>Was der Node tut</th></tr><tr><td>Fallliste laden (Mock)</td><td><code>Offene Faelle laden (Postgres)</code></td><td>SELECT über <code>feldmark_pfaendung_faelle</code>, gefiltert auf alles, was noch nicht erledigt ist. Erledigte Fälle kommen gar nicht erst an — das spart den Sweep über toten Bestand.</td></tr><tr><td>Status-Update — hier DB-Node einsetzen</td><td><code>Status zurueckschreiben (Idempotenz)</code></td><td>UPDATE mit <code>array_append</code> auf <code>erinnerungen_gesendet</code>. Das ist der Node, dessen Fehlen den Mock-Piloten fachlich falsch gemacht hat.</td></tr><tr><td>— (neu)</td><td><code>Protokoll schreiben (KPI-Basis)</code></td><td>INSERT in <code>feldmark_pfaendung_protokoll</code>. Jede Erinnerung, jede Eskalation und jedes Fristversäumnis wird mit Fall-ID, Fristende und Restlaufzeit festgehalten.</td></tr></table>
+<p>Fristlogik, Switch und die vier Nachrichtentexte sind unverändert geblieben. Das ist kein Zufall,
+sondern der Grund, warum die Trennung von Datenzugriff und Fachregel etwas taugt: Die Datenquelle zu
+wechseln war ein Node-Tausch, keine Neuentwicklung.</p>
+
+<div class="kb"><b>Kursbezug: Trennung von Fachlogik und Integration.</b> Wenn die Regel im selben
+Baustein steckt wie der Datenzugriff, kostet jeder Systemwechsel eine Neuimplementierung der Regel —
+und damit ein neues Testrisiko. Hier liegt die Regel in einem Code-Node, der nur Felder erwartet.
+Ob die aus einem Mock, aus Postgres oder später aus dem Kernbanksystem kommen, ist ihm egal.</div>
+
+<h3>Eine fachliche Korrektur habe ich dabei mitgenommen</h3>
+<p>Im Mock-Piloten setzten die Erinnerungen den Status auf „In Bearbeitung“. Das war falsch: Der
+Workflow erinnert, er bearbeitet nicht. Ein Fall, der auf „Geprüft“ steht, wäre durch eine Erinnerung
+fachlich zurückgestuft worden. Jetzt lassen alle drei Erinnerungszweige den Status unangetastet —
+nur das Fristversäumnis schließt den Fall ab.</p>
+
+<h2>Aufsetzen — vier Schritte</h2>
+<ol>
+<li><b>Postgres bereitstellen.</b> Falls noch keine Instanz da ist, reicht ein Container:
+<div class="mono">docker run --name feldmark-pg -e POSTGRES_PASSWORD=feldmark \
+  -e POSTGRES_DB=feldmark -p 5432:5432 -d postgres:16</div></li>
+<li><b>Schema einspielen.</b> <code>feldmark_pfaendung_schema.sql</code> ausführen — legt beide Tabellen
+an und schreibt sechs Testfälle. Die Zustelldaten sind relativ zu <code>CURRENT_DATE</code> gesetzt,
+also feuern alle Zweige unabhängig vom Ausführungstag.
+<div class="mono">psql -h localhost -U postgres -d feldmark -f feldmark_pfaendung_schema.sql</div></li>
+<li><b>Workflow importieren</b> und in beiden Postgres-Nodes dieselbe Credential auswählen.
+Läuft n8n selbst im Docker, ist der Host nicht <code>localhost</code>, sondern
+<code>host.docker.internal</code> beziehungsweise der Container-Name im gemeinsamen Netzwerk.</li>
+<li><b>„Manuell testen“ → Execute Workflow.</b> Danach ein zweites Mal ausführen.</li>
+</ol>
+
+<h2>Was die beiden Läufe zeigen müssen</h2>
+<p>Lauf 1 lädt fünf Fälle — der sechste ist bereits erledigt und wird vom SELECT gar nicht
+zurückgegeben:</p>
+<table><tr><th>Fall</th><th>Resttage</th><th>Ausgang</th></tr><tr><td>PF-2026-0440</td><td>-3</td><td>Fristversäumnis</td></tr><tr><td>PF-2026-0455</td><td>1</td><td>Eskalation</td></tr><tr><td>PF-2026-0463</td><td>3</td><td>Erinnerung 2</td></tr><tr><td>PF-2026-0462</td><td>8</td><td>kein Handlungsbedarf</td></tr><tr><td>PF-2026-0481</td><td>15</td><td>Erinnerung 1</td></tr></table>
+<p>Lauf 2 lädt nur noch vier Fälle (das Fristversäumnis ist abgeschlossen und fällt aus dem Filter)
+und alle vier landen im Ausgang <b>Kein Handlungsbedarf</b>. Kein Protokolleintrag kommt dazu,
+keine E-Mail ginge raus. Das ist die Idempotenz, und sie ist der eigentliche Unterschied zwischen
+einer Demo und einem Workflow, den man aktiv schalten kann.</p>
+
+<div class="mono">Fallakte nach beiden Läufen:
+
+PF-2026-0440 | Abgeschlossen mit Fristversaeumnis | {erinnerung_1,erinnerung_2,eskalation,fristversaeumnis}
+PF-2026-0455 | Geprueft                           | {erinnerung_1,erinnerung_2,eskalation}
+PF-2026-0462 | In Bearbeitung                     | {erinnerung_1}
+PF-2026-0463 | In Bearbeitung                     | {erinnerung_1,erinnerung_2}
+PF-2026-0470 | Erklaerung versandt                | {erinnerung_1}
+PF-2026-0481 | Eingegangen                        | {erinnerung_1}</div>
+<p>Beachte PF-2026-0455: Status weiterhin „Geprüft“, obwohl eine Eskalation rausging. Genau das ist
+die eben beschriebene Korrektur.</p>
+
+<h2>Die Idempotenz sitzt an zwei Stellen — mit Absicht</h2>
+<div class="mono">1) Code-Node
+   ... && !gesendet.includes('erinnerung_2')
+
+2) UPDATE
+   WHERE fall_id = $3
+     AND NOT ($1 = ANY (erinnerungen_gesendet))</div>
+<p>Die erste Prüfung verhindert, dass die Erinnerung morgen erneut rausgeht. Die zweite verhindert,
+dass bei einem doppelten oder parallelen Lauf desselben Tages derselbe Marker zweimal im Array landet.
+Die beiden schützen gegen verschiedene Fehler und ersetzen einander nicht.</p>
+
+<div class="kb"><b>Kursbezug: Idempotenz als Entwurfsprinzip, nicht als Nachbesserung.</b>
+Jeder Automatisierungsschritt mit Außenwirkung — E-Mail, Zahlung, Statusänderung — braucht die Frage:
+Was passiert, wenn dieser Schritt zweimal läuft? In verteilten Systemen ist doppelte Ausführung der
+Normalfall, nicht die Ausnahme. Die Antwort gehört in den Entwurf, nicht in den Incident-Report.</div>
+
+<h2>Die Reihenfolge Protokoll vor Status ist eine Entscheidung</h2>
+<p>Der Workflow schreibt erst den Protokolleintrag, dann den Marker. Bricht der Lauf dazwischen ab,
+steht ein Eintrag zu viel in der Protokolltabelle und die Erinnerung geht am Folgetag erneut raus —
+lästig, aber harmlos.</p>
+<p>Umgekehrt wäre es schlecht: Marker gesetzt, aber nie protokolliert und nie versandt. Der Fall gälte
+als erinnert, obwohl niemand etwas bekommen hat, und niemand würde es merken. Bei Teilausfällen soll
+das System immer in die harmlose Richtung kippen.</p>
+
+<div class="kb"><b>Kursbezug: Fehlerpfad-Entwurf.</b> Bei jedem Automatisierungsschritt mit mehreren
+Schreibzugriffen entscheidet die Reihenfolge, welchen Fehler du im Ausfall bekommst. Man kann sich
+nicht aussuchen, ob etwas ausfällt — nur, welcher der beiden Fehler dann eintritt.</div>
+
+<h2>Was der Workflow nebenbei liefert: die KPI-Basis</h2>
+<p>Die Protokolltabelle ist mehr als ein Logfile. Jede Zeile ist ein zählbares Ereignis mit Fall-ID,
+Datum und Restlaufzeit — damit lässt sich die Fristeinhaltungsquote aus dem Soll-Konzept gegen die
+Baseline messen, statt sie zu behaupten:</p>
+<div class="mono">SELECT round(100.0 * count(*) FILTER (
+         WHERE status &lt;&gt; 'Abgeschlossen mit Fristversaeumnis')
+       / nullif(count(*), 0), 1) AS fristeinhaltung_prozent
+FROM   feldmark_pfaendung_faelle
+WHERE  status IN ('Erklaerung versandt', 'Abgeschlossen',
+                  'Abgeschlossen mit Fristversaeumnis');</div>
+<p>Zusätzlich zeigt <code>SELECT ereignis, count(*) FROM feldmark_pfaendung_protokoll GROUP BY 1</code>, wie oft
+eskaliert werden musste. Eine sinkende Eskalationsquote bei gleichbleibender Fallzahl ist der beste
+Beleg dafür, dass die Automatisierung wirkt — deutlich aussagekräftiger als die Fristquote allein,
+weil sie schon vor dem Schaden anschlägt.</p>
+
+<h2>Was jetzt noch fehlt</h2>
+<p>Zwei Dinge. Erstens der Versand: Der Node <code>Versand (Platzhalter)</code> ist weiterhin ein NoOp,
+weil ich deine Postfach-Zugangsdaten nicht kenne. Ein Gmail-, Outlook- oder SMTP-Node an dieser Stelle,
+gemappt auf <code>empfaenger</code>, <code>betreff</code> und <code>nachricht</code>, und der Pilot ist
+vollständig. Zweitens die Feiertagsliste im Code-Node — aktuell nur die bundeseinheitlichen Feiertage
+2026 als Beispiel, für Berlin fehlt der 8. März.</p>
+
+<div class="warn"><b>Bevor du den Workflow aktiv schaltest.</b> Solange der Versand ein Platzhalter ist,
+setzt der Workflow bereits Marker und schreibt Protokolleinträge, ohne dass jemand eine Nachricht
+bekommt. Im Test ist das genau richtig. Aktiv geschaltet wäre es der Fehlerfall aus dem Abschnitt oben:
+Fälle gelten als erinnert, sind es aber nicht. Also entweder erst den Versand einbauen — oder den
+Schedule-Trigger vorerst deaktiviert lassen.</div>
+
+<h2>Offener Punkt für Legal, unverändert</h2>
+<p>Der Workflow rechnet ab <code>zustelldatum</code>. Bei Papier ist das der Eingangsstempel, bei eBO
+der Zustellzeitpunkt aus dem Nachrichtenkopf. Ob beide denselben Fristbeginn auslösen und wer das Datum
+verbindlich setzt, muss vor Produktivgang entschieden sein — sonst automatisiert der Workflow eine
+Rechtsfrage, die vorher niemand beantwortet hat. Das steht als Kommentar auch in der Spaltendefinition
+im SQL-Skript, damit es nicht in einem Dokument verschwindet.</p>
+
+</div></html>
