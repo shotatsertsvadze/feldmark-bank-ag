@@ -60,6 +60,87 @@ select {
   color: inherit;
 }
 
+/* ----------------------------------------------------------------- Shell */
+
+.shell {
+  display: flex;
+  min-height: 100vh;
+  align-items: stretch;
+}
+
+.sidebar {
+  flex: none;
+  width: 248px;
+  padding: 32px 22px;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.sidebar__brand {
+  padding-bottom: 20px;
+  margin-bottom: 20px;
+  border-bottom: 2px solid var(--ink);
+}
+
+.sidebar__brand-name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 19px;
+  letter-spacing: 0.01em;
+  margin: 0;
+}
+
+.sidebar__brand-sub {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin: 5px 0 0;
+}
+
+.sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar__nav-link {
+  display: block;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--ink-soft);
+  text-decoration: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.sidebar__nav-link:hover {
+  background: var(--line-soft);
+  color: var(--ink);
+}
+
+.sidebar__nav-link--active {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.sidebar__nav-link--active:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.shell__main {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ---------------------------------------------------------------- Layout */
 
 .app {
@@ -739,6 +820,28 @@ p.view-lede {
 }
 
 /* --------------------------------------------------------------- Mobile */
+
+@media (max-width: 780px) {
+  .shell {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: auto;
+    height: auto;
+    position: static;
+    padding: 20px 16px;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+  .sidebar__brand {
+    padding-bottom: 14px;
+    margin-bottom: 14px;
+  }
+  .sidebar__nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
 
 @media (max-width: 640px) {
   .app {

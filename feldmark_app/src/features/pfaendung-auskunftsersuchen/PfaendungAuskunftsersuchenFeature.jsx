@@ -2,7 +2,7 @@ import { useState } from "react";
 import Posteingang from "./components/Posteingang.jsx";
 import Falluebersicht from "./components/Falluebersicht.jsx";
 
-export default function App() {
+export default function PfaendungAuskunftsersuchenFeature() {
   const [ansicht, setAnsicht] = useState("posteingang");
   const [reloadSignal, setReloadSignal] = useState(0);
 
@@ -10,8 +10,8 @@ export default function App() {
     <div className="app">
       <header className="masthead">
         <div>
-          <h1 className="masthead__name">Feldmark Bank AG</h1>
-          <p className="masthead__sub">Kontenservice · Klassifikation &amp; Fristüberwachung</p>
+          <h1 className="masthead__name">Pfändung &amp; Auskunftsersuchen</h1>
+          <p className="masthead__sub">Klassifikation &amp; Fristüberwachung eingehender Schreiben</p>
         </div>
         <nav className="nav-tabs">
           <button

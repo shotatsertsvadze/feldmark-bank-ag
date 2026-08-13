@@ -5,6 +5,11 @@ klassifiziert eingehende Schreiben (Pfändung, Auskunftsersuchen etc.) und
 speist eine Fristüberwachung. **Dieser Baustein ist fertig, getestet, committed
 und gepusht.** Ordner: `Digitalisierungsmanager/projekte/Final Project Preperation/`.
 
+`feldmark_klassifikation/` wurde zu `feldmark_app/` — der eigenständigen App
+gehört jetzt eine App-Shell mit Sidebar-Navigation, sodass sie als erste von
+perspektivisch mehreren Features der größeren Feldmark-Projekt-App fungiert
+(siehe Architektur unten).
+
 ## Repo & Cloud-Ressourcen
 - GitHub (privat): https://github.com/shotatsertsvadze/feldmark-bank-ag — eigenständiges Repo, NICHT im Home-Verzeichnis-Repo (das zeigt auf ein anderes Projekt, `fintech-fraud-detection-pipeline` — nicht anfassen).
 - Supabase-Projekt: **„shotatsertsvadze's Project"** (`ziwzymarlakoxrgdesvw`), Region eu-west-2. Enthält auch den Fintech-Reifegrad-Checker (andere Tabellen, kein Konflikt).
@@ -16,11 +21,13 @@ und gepusht.** Ordner: `Digitalisierungsmanager/projekte/Final Project Preperati
 
 ## Architektur
 ```
-feldmark_klassifikation/         Express + React (Vite), eigenständige App
+feldmark_app/                    Express + React (Vite), eine App mit Sidebar-Shell + Features
   server/mistral.js                OCR + Klassifikation (6-Wege-Schema) + Routing-Logik
   server/db.js                     Postgres-Schreib-/Lesefunktionen
   server/index.js                  REST-Endpunkte (/api/klassifizieren, /api/faelle, /api/sichtpruefung)
-  src/                              React-UI: Posteingang (Upload) + Fallübersicht (Dashboard)
+  src/App.jsx                      Router-Shell (react-router-dom), rendert Sidebar + aktives Feature
+  src/app/Sidebar.jsx              Bank-Branding + Feature-Navigation (aktuell 1 Eintrag, wächst organisch)
+  src/features/pfaendung-auskunftsersuchen/   Erstes Feature (bisheriges React-UI: Posteingang + Fallübersicht)
   .env                              MISTRAL_API_KEY, DATABASE_URL (Session Pooler!) — lokal, gitignored
 feldmark_pfaendung_schema.sql      Postgres-Schema Pfändung (bereits vor diesem Baustein bestehend)
 feldmark_auskunftsersuchen_schema.sql   Postgres-Schema Auskunftsersuchen (neu)
@@ -68,6 +75,20 @@ Aktenzeichen-Abgleich.
 - Batch-Zustelldatum: nur Warnhinweis gebaut, kein Datums-Override pro Datei (bewusste Kleinstlösung).
 
 ## Nächste sinnvolle Schritte (nicht begonnen)
-- Diesen Baustein in die größere Feldmark-Projekt-App einpacken (User-Framing: "alles Nötige wird eingepackt").
 - Echten Versand-Kanal an die Platzhalter-Nodes hängen.
 - Konfidenzschwellen mit echten Testläufen kalibrieren.
+
+## Erledigt: Baustein in Haupt-App eingepackt (2026-08-13)
+`feldmark_klassifikation/` → `feldmark_app/` umbenannt (git mv, History erhalten).
+Neue App-Shell: `src/App.jsx` (react-router-dom) + `src/app/Sidebar.jsx` mit
+Feldmark-Bank-AG-Branding und Feature-Navigation. Bisheriger App-Inhalt liegt
+jetzt unter `src/features/pfaendung-auskunftsersuchen/` (Komponenten, api.js,
+dokumenttypen.js, fristlogik.js — Relativpfade unverändert, da als Ganzes
+verschoben). Sidebar zeigt aktuell nur dieses eine Feature; weitere Bausteine
+werden später einfach als zusätzliche Route + Sidebar-Eintrag ergänzt, keine
+Registry o.Ä. vorgebaut. In Desktop- und Mobile-Breite getestet (Sidebar
+stapelt sich mobil über den Inhalt), API-Calls über Vite-Proxy funktionieren
+unverändert. `.claude/launch.json` für `npm run dev` (Port 5291) angelegt.
+Noch offen: `.env`/`.env.example`-Kommentare und Skript-Namen im Detail
+verweisen teils noch auf den alten Namen "Feldmark-Klassifikations-Server"
+(server/index.js Log-Ausgabe) — kosmetisch, nicht funktionsrelevant.

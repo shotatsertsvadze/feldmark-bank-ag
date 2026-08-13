@@ -10,7 +10,7 @@ dist/
 .env.local
 
 # Uploads (Laufzeitdaten, keine Quelldateien)
-feldmark_klassifikation/uploads/*
-!feldmark_klassifikation/uploads/.gitkeep
+feldmark_app/uploads/*
+!feldmark_app/uploads/.gitkeep
 
 .DS_Store
