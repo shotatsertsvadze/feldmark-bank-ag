@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "feldmark-app",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "feldmark_app", "run", "dev"],
+      "port": 5291
+    }
+  ]
+}

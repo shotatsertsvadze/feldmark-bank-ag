@@ -636,8 +636,130 @@ p.view-lede {
   border-top: 1px solid var(--line-soft);
 }
 
-.fall-zeile:first-child {
+.fallliste > div:first-child > .fall-zeile {
   border-top: none;
+}
+
+.fall-zeile--klickbar {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.fall-zeile--klickbar:hover {
+  background: var(--paper);
+}
+
+.fall-zeile__erweiterung {
+  padding: 16px 20px 22px;
+  background: var(--paper);
+  border-top: 1px solid var(--line-soft);
+}
+
+.erweiterung__vorschau {
+  font-size: 13.5px;
+  margin: 4px 0 14px;
+  color: var(--ink-soft);
+}
+
+.erweiterung__hinweis {
+  color: var(--ink-faint);
+}
+
+.erweiterung__aktionen {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.erweiterung__aktionen input[type="text"] {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  min-width: 220px;
+}
+
+.erweiterung__erklaerung {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--line);
+}
+
+.erweiterung__erklaerung textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  resize: vertical;
+  margin-bottom: 12px;
+}
+
+/* Nicht blockierende Hinweise (Konfidenz/Alter des Guthabens) vor der
+   Erklaerung-Erzeugung - gleicher Ton wie .hinweis-batch, aber kompakter
+   und stapelbar, da hier mehrere gleichzeitig auftreten koennen. */
+.erweiterung__warnhinweis {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  background: var(--ochre-bg);
+  color: var(--ochre);
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.erweiterung__warnhinweis + .erweiterung__warnhinweis {
+  margin-top: 6px;
+}
+
+/* Vier-Augen-Warnung bei Freigabe: staerker markiert als die Konfidenz-
+   Hinweise, weil sie eine bewusste Entscheidung verlangt statt nur zu
+   informieren - eigene Randfarbe (oxblood) statt der ochre Hinweis-Note. */
+.erweiterung__vier-augen {
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: var(--oxblood-bg);
+  color: var(--oxblood);
+  border: 1px solid var(--oxblood);
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.erweiterung__vier-augen .erweiterung__aktionen {
+  margin-top: 8px;
+}
+
+/* Freigabe-/Versand-Zwischenstatus: slate = "in Arbeit, noch nicht
+   abgeschlossen", moss = derselbe abgeschlossene Erfolgston wie an
+   anderer Stelle im Projekt. */
+.erweiterung__status {
+  margin: 16px 0 0;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.erweiterung__status strong {
+  font-weight: 700;
+}
+
+.erweiterung__status--ausstehend {
+  background: var(--slate-bg);
+  color: var(--slate);
+}
+
+.erweiterung__status--abgeschlossen {
+  background: var(--moss-bg);
+  color: var(--moss);
 }
 
 .fall-zeile__id {

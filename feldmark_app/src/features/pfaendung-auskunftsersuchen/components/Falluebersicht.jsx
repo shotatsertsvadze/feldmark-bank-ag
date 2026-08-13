@@ -4,6 +4,7 @@ import { berechneFrist, formatiereDatum } from "../fristlogik.js";
 import { DOKUMENTTYP_LABEL } from "../dokumenttypen.js";
 import Fristleiste from "./Fristleiste.jsx";
 import Stempel from "./Stempel.jsx";
+import PfaendungErweiterung from "./PfaendungErweiterung.jsx";
 
 const FILTER = [
   { id: "alle", label: "Alle" },
@@ -19,6 +20,8 @@ export default function Falluebersicht({ reloadSignal }) {
   const [laedt, setLaedt] = useState(true);
   const [fehler, setFehler] = useState(null);
   const [filter, setFilter] = useState("alle");
+  const [aufgeklapptFallId, setAufgeklapptFallId] = useState(null);
+  const [internerReload, setInternerReload] = useState(0);
 
   useEffect(() => {
     let abgebrochen = false;
@@ -29,13 +32,20 @@ export default function Falluebersicht({ reloadSignal }) {
         if (abgebrochen) return;
         setFaelle(f);
         setSichtpruefung(s);
+        // Freigegebene Faelle verschwinden aus der offenen Liste (Status
+        // "Erklaerung versandt" wird vom Backend gefiltert) - aufgeklappte
+        // Zeile dann schliessen, statt eine verwaiste Ansicht zu zeigen.
+        if (aufgeklapptFallId && !f.some((x) => x.fall_id === aufgeklapptFallId)) {
+          setAufgeklapptFallId(null);
+        }
       })
       .catch((e) => !abgebrochen && setFehler(String(e.message || e)))
       .finally(() => !abgebrochen && setLaedt(false));
     return () => {
       abgebrochen = true;
     };
-  }, [reloadSignal]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadSignal, internerReload]);
 
   const gefiltert = faelle.filter((f) => {
     if (filter === "alle") return true;
@@ -94,23 +104,37 @@ export default function Falluebersicht({ reloadSignal }) {
           </div>
         ) : (
           <div className="fallliste">
-            {gefiltert.map((f) => (
-              <div className="fall-zeile" key={f.fall_id}>
-                <span className="fall-zeile__id">{f.fall_id}</span>
-                <div className="fall-zeile__parteien">
-                  <div className="fall-zeile__typ">{DOKUMENTTYP_LABEL[f.dokumenttyp] || f.dokumenttyp}</div>
-                  <div className="fall-zeile__namen">
-                    {f.partei_a} → {f.partei_b}
+            {gefiltert.map((f) => {
+              const istPfaendungsblock = f.dokumenttyp === "pfaendungsschreiben";
+              const istAufgeklappt = aufgeklapptFallId === f.fall_id;
+              return (
+                <div key={f.fall_id}>
+                  <div
+                    className={`fall-zeile${istPfaendungsblock ? " fall-zeile--klickbar" : ""}`}
+                    onClick={istPfaendungsblock ? () => setAufgeklapptFallId(istAufgeklappt ? null : f.fall_id) : undefined}
+                  >
+                    <span className="fall-zeile__id">{f.fall_id}</span>
+                    <div className="fall-zeile__parteien">
+                      <div className="fall-zeile__typ">{DOKUMENTTYP_LABEL[f.dokumenttyp] || f.dokumenttyp}</div>
+                      <div className="fall-zeile__namen">
+                        {f.partei_a} → {f.partei_b}
+                      </div>
+                    </div>
+                    <span className="fall-zeile__status">{f.status}</span>
+                    <Fristleiste
+                      eingangsdatum={f.eingangsdatum}
+                      antwortfristTage={f.antwortfrist_tage}
+                      erinnerungenGesendet={f.erinnerungen_gesendet}
+                    />
                   </div>
+                  {istAufgeklappt && (
+                    <div className="fall-zeile__erweiterung">
+                      <PfaendungErweiterung fallId={f.fall_id} onFallGeaendert={() => setInternerReload((n) => n + 1)} />
+                    </div>
+                  )}
                 </div>
-                <span className="fall-zeile__status">{f.status}</span>
-                <Fristleiste
-                  eingangsdatum={f.eingangsdatum}
-                  antwortfristTage={f.antwortfrist_tage}
-                  erinnerungenGesendet={f.erinnerungen_gesendet}
-                />
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

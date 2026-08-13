@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 
 import { istUnterstuetzterTyp, normalisiereFuerOcr } from "./convert.js";
 import { ocrDokument, klassifiziereUndExtrahiere, bestimmeRouting, PFAENDUNGSBLOCK_TYPEN } from "./mistral.js";
+import { erzeugeDrittschuldnererklaerung } from "./pkonto_drittschuldner.js";
 import * as db from "./db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -185,6 +186,111 @@ app.get("/api/faelle", async (req, res) => {
 app.get("/api/sichtpruefung", async (req, res) => {
   try {
     res.json({ eintraege: await db.listeSichtpruefung() });
+  } catch (fehler) {
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+app.get("/api/faelle/:fallId/erweiterung", async (req, res) => {
+  try {
+    const fall = await db.ermittleFallMitErweiterung(req.params.fallId);
+    if (!fall) return res.status(404).json({ fehler: "Fall nicht gefunden." });
+    res.json({ fall });
+  } catch (fehler) {
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+// Manuelle Erfassung von P-Konto-Status und Guthaben (keine Kernbank-API
+// angebunden, siehe Ergaenzungskonzept Annahme A7). Wird bei dieser
+// Erfassung erstmals bekannt, dass KEIN P-Konto vorliegt, loest das
+// System die P-Konto-Benachrichtigung sofort aus, statt sie einem
+// Mitarbeiter separat zu ueberlassen - das ist der eigentliche
+// Automatisierungsgewinn (siehe Ergaenzungskonzept Abschnitt 1.2).
+app.put("/api/faelle/:fallId/erweiterung", async (req, res) => {
+  try {
+    const { ist_p_konto, freibetrag_erhoehung_eur, guthaben_eur, guthaben_erfasst_von } = req.body;
+    const aktualisiert = await db.aktualisiereErweiterung(req.params.fallId, {
+      istPKonto: typeof ist_p_konto === "boolean" ? ist_p_konto : null,
+      freibetragErhoehungEur: freibetrag_erhoehung_eur ?? null,
+      guthabenEur: guthaben_eur ?? null,
+      guthabenErfasstVon: guthaben_erfasst_von ?? null,
+    });
+    if (!aktualisiert) return res.status(404).json({ fehler: "Fall nicht gefunden." });
+
+    let benachrichtigungAusgeloest = false;
+    if (aktualisiert.ist_p_konto === false && !aktualisiert.p_konto_benachrichtigt_am) {
+      await db.markierePKontoBenachrichtigt(req.params.fallId);
+      benachrichtigungAusgeloest = true;
+    }
+    res.json({ erweiterung: aktualisiert, p_konto_benachrichtigung_ausgeloest: benachrichtigungAusgeloest });
+  } catch (fehler) {
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+app.post("/api/faelle/:fallId/erklaerung", async (req, res) => {
+  try {
+    const fall = await db.ermittleFallMitErweiterung(req.params.fallId);
+    if (!fall) return res.status(404).json({ fehler: "Fall nicht gefunden." });
+
+    const andereOffenePfaendungen = await db.findeAndereOffenePfaendungen(fall.schuldner, fall.fall_id);
+    const ergebnis = erzeugeDrittschuldnererklaerung(fall, fall, andereOffenePfaendungen);
+    if (!ergebnis.ok) return res.status(422).json({ fehler: ergebnis.grund });
+
+    await db.speichereErklaerung(fall.fall_id, ergebnis.text);
+    res.json({ erklaerung_text: ergebnis.text });
+  } catch (fehler) {
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+// Weiche Vier-Augen-Pruefung: kein echtes Auth-System vorhanden (siehe
+// KONTEXT.md), daher kein hartes Blockieren moeglich - stattdessen ein
+// expliziter Bestaetigungsschritt, wenn Freigebende:r == Guthaben-
+// Erfasser:in (Textvergleich, whitespace-/case-normalisiert). Serverseitig
+// geprueft statt nur im Frontend, damit ein direkter API-Aufruf die
+// Warnung nicht umgehen kann.
+app.post("/api/faelle/:fallId/erklaerung/freigeben", async (req, res) => {
+  try {
+    const freigegebenVon = req.body.freigegeben_von;
+    const vierAugenBestaetigt = req.body.vier_augen_bestaetigt === true;
+    if (!freigegebenVon) return res.status(400).json({ fehler: "freigegeben_von fehlt." });
+
+    const fall = await db.ermittleFallMitErweiterung(req.params.fallId);
+    if (!fall) return res.status(404).json({ fehler: "Fall nicht gefunden." });
+
+    const gleichePerson =
+      !!fall.guthaben_erfasst_von &&
+      fall.guthaben_erfasst_von.trim().toLowerCase() === freigegebenVon.trim().toLowerCase();
+    if (gleichePerson && !vierAugenBestaetigt) {
+      return res.status(409).json({
+        fehler: `"${freigegebenVon}" hat auch zuletzt das Guthaben erfasst - Vier-Augen-Prinzip nicht eingehalten.`,
+        vier_augen_warnung: true,
+      });
+    }
+
+    const ergebnis = await db.gibErklaerungFrei(req.params.fallId, freigegebenVon);
+    if (!ergebnis) return res.status(404).json({ fehler: "Fall nicht gefunden oder noch keine Erklaerung erzeugt." });
+    if (gleichePerson) {
+      await db.protokolliereVierAugenErklaerungUebersteuert(req.params.fallId, fall.zustelldatum);
+    }
+    res.json({ erweiterung: ergebnis });
+  } catch (fehler) {
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+// Zweiter Schritt nach Freigabe: bestaetigt den tatsaechlichen (manuellen)
+// Versand und schliesst den Fall erst dann aus der Fristueberwachung aus -
+// siehe Kommentar bei db.gibErklaerungFrei() fuer die Begruendung.
+app.post("/api/faelle/:fallId/erklaerung/versenden", async (req, res) => {
+  try {
+    const versendetVon = req.body.versendet_von;
+    if (!versendetVon) return res.status(400).json({ fehler: "versendet_von fehlt." });
+    const ergebnis = await db.bestaetigeVersand(req.params.fallId, versendetVon);
+    if (!ergebnis) return res.status(404).json({ fehler: "Fall nicht gefunden oder noch nicht freigegeben." });
+    res.json({ erweiterung: ergebnis });
   } catch (fehler) {
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }

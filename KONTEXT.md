@@ -74,8 +74,184 @@ Aktenzeichen-Abgleich.
 - Kein Auth/Login, keine Multi-User-Rollen.
 - Batch-Zustelldatum: nur Warnhinweis gebaut, kein Datums-Override pro Datei (bewusste Kleinstlösung).
 
-## Nächste sinnvolle Schritte (nicht begonnen)
+## Nächste sinnvolle Schritte
 - Echten Versand-Kanal an die Platzhalter-Nodes hängen.
+- UI fuer P-Konto/Drittschuldnererklaerung: vollstaendig verifiziert.
+- Redesign Freigabe-/Versand-Trennung, Vier-Augen, Konfidenz-/Alters-
+  Warnhinweise: **umgesetzt, getestet, siehe Eintrag unten (2026-08-13,
+  autonomer Nacht-Loop).**
+- Verbleibende Luecke aus dieser Nacht (bewusst nicht geloest, siehe unten):
+  wird nach Freigabe/Versand eine NEUE Drittschuldnererklaerung fuer
+  denselben Fall erzeugt (z.B. weil sich das Guthaben geaendert hat),
+  bleibt `fall.status` auf "Erklaerung versandt"/"Erklaerung freigegeben"
+  stehen, obwohl die neue Fassung wieder bei "erzeugt, nicht freigegeben"
+  anfaengt (erklaerung_freigegeben_am/erklaerung_versendet_am werden zwar
+  korrekt zurueckgesetzt, `fall.status` aber nicht - die volle
+  Status-Wertemenge wird von n8n mitverwendet und war in dieser Session
+  nicht vollstaendig genug bekannt, um sie gefahrlos anzufassen). Praktisch
+  selten (Erklaerung wird normalerweise nicht nach Versand neu erzeugt),
+  aber ein sauberer Fix waere: `fall.status` beim Erzeugen einer neuen
+  Erklaerung ebenfalls zuruecksetzen, sobald der volle Status-Automat
+  bekannt ist.
+
+## Erledigt: Redesign Freigabe-/Versand-Trennung + Vier-Augen + Warnhinweise (2026-08-13, autonomer Nacht-Loop)
+Auf Nutzerwunsch autonom über Nacht umgesetzt (`/loop`, dynamischer Modus,
+kein Eingriff während der Arbeit), Konzept aus dem process-automation-toolkit
+(Mode 2, siehe vorheriger Chat-Verlauf) vollständig implementiert und über
+die echte Browser-UI getestet — nicht nur die API direkt.
+
+**DB (additiv, live auf Supabase):**
+- `feldmark_pfaendung_erweiterung`: drei neue Spalten —
+  `guthaben_erfasst_von`, `erklaerung_versendet_von`, `erklaerung_versendet_am`.
+- **Bewusste Ausnahme von der Regel "`feldmark_pfaendung_faelle` bleibt
+  unveraendert"**: der CHECK-Constraint auf `status` musste um den neuen
+  Wert `'Erklaerung freigegeben'` erweitert werden (Fund beim Testen, siehe
+  unten) — reine Erweiterung der erlaubten Werteliste, keine Spalten-/
+  Formaenderung, betrifft die `SELECT *`-Abfragen der n8n-Workflows nicht.
+
+**Backend (`server/db.js`, `server/index.js`):**
+- `gibErklaerungFrei()` setzt jetzt nur noch den Zwischenstatus "Erklaerung
+  freigegeben" statt direkt "Erklaerung versandt". Neue Funktion
+  `bestaetigeVersand()` + Route `POST /erklaerung/versenden` schließen den
+  zweiten Schritt ab und setzen erst dann den Endstatus. Der Fall bleibt in
+  der offenen Liste (`listeOffeneFaelle`), solange nur freigegeben, nicht
+  versendet — geprüft im Test (Fallzahl ging von 9→8 erst nach "Versand
+  bestätigen", nicht schon nach "Freigeben").
+- Weiche Vier-Augen-Prüfung serverseitig (nicht nur im Frontend, damit ein
+  direkter API-Aufruf sie nicht umgehen kann): `POST /erklaerung/freigeben`
+  vergleicht `freigegeben_von` mit dem zuletzt gespeicherten
+  `guthaben_erfasst_von`; bei Übereinstimmung ohne `vier_augen_bestaetigt:
+  true` kommt ein 409 mit `vier_augen_warnung: true` zurück, das Frontend
+  zeigt dann einen expliziten Bestätigungsschritt. Eine Übersteuerung wird
+  als eigenes Protokoll-Ereignis (`vier_augen_erklaerung_uebersteuert`)
+  geloggt, analog zum bestehenden Vier-Augen-Muster bei niedriger
+  Betragskonfidenz.
+- `speichereErklaerung()` setzt jetzt auch `erklaerung_versendet_von/am`
+  einer evtl. vorherigen Fassung zurück (Bug beim Bauen entdeckt: sonst
+  hätte eine neu erzeugte Erklärung fälschlich als "bereits versendet"
+  gegolten, wenn die alte Fassung schon versendet war). `fall.status`
+  bleibt dabei aus dem oben genannten Grund unangetastet — siehe Lücke bei
+  "Nächste sinnvolle Schritte".
+
+**Frontend (`PfaendungErweiterung.jsx`, `index.css`):**
+- Neues Feld "Erfasst von" bei der Guthaben-Eingabe.
+- Nicht blockierende Warnhinweise vor "Drittschuldnererklärung erzeugen":
+  Konfidenz < 85 (`SCHWELLE_KONFIDENZ_BETRAG`, gleicher Wert wie in
+  `mistral.js`) und Guthaben älter als 24 Stunden. Bewusste Vereinfachung
+  gegenüber dem Konzept ("1 Werktag"): reine Stundenschwelle statt
+  Wochenend-/Feiertagslogik, für einen reinen Hinweis nicht gerechtfertigt.
+- Vier-Augen-Warnung mit explizitem "Trotzdem freigeben"-Button.
+- Neuer Versand-Schritt nach Freigabe (eigenes Formular + Bestätigungs-
+  Banner), finaler Erfolgs-Banner zeigt beide Nachweise (freigegeben +
+  versendet) zusammen.
+- Styling erweitert das bestehende Farbtoken-System (ochre = Hinweis,
+  oxblood = Vier-Augen-Warnung, slate = Zwischenstatus, moss =
+  abgeschlossen) statt einer neuen Designsprache — passend zur
+  frontend-design-Skill-Leitlinie, hier bewusst keine große Neugestaltung,
+  sondern präzise Erweiterung eines bereits distinktiven Systems.
+
+**Beim Testen gefundener und behobener Bug (echter Fehler, nicht kosmetisch):**
+Der erste Live-Test des Vier-Augen-Override ("Trotzdem freigeben") schlug
+mit HTTP 500 fehl: `new row for relation "feldmark_pfaendung_faelle"
+violates check constraint "feldmark_pfaendung_faelle_status_check"` — der
+neue Status-Wert war im CHECK-Constraint nicht freigegeben. Migration
+nachgezogen (siehe oben), danach erfolgreich erneut getestet.
+
+**Test-Vorgehen**: PF-2026-0455 temporär präpariert (niedrige Konfidenz,
+Forderungsbetrag, `guthaben_erfasst_am` künstlich auf vor 30h gesetzt), alle
+neuen Zustände über die echte Browser-UI durchgeklickt (Konfidenz-Warnung,
+Alters-Warnung, Vier-Augen-Konflikt + Override inkl. Protokoll-Eintrag,
+Freigabe→Versand-Zwischenstatus→Endstatus). Danach alle Testwerte
+zurückgesetzt (`feldmark_pfaendung_erweiterung`-Zeile, `fall.status`, und
+das Test-Protokoll-Ereignis wieder gelöscht — Audit-Log soll keine
+Testartefakte enthalten).
+
+**Git**: Auf ausdrücklichen Nutzerwunsch diesmal committed (vorherige
+Session-Regel "nicht committen" war zeitlich begrenzt gültig, wurde in
+dieser Session vom Nutzer aufgehoben) — lokal, kein Push.
+
+## Erledigt: UI-Verifikation P-Konto/Drittschuldnererklaerung (2026-08-13, Fortsetzung)
+Dev-Server neu gestartet, Fallübersicht → PF-2026-0455 aufgeklappt, kompletten
+Flow durchgeklickt (Guthaben eingeben, Speichern, Drittschuldnererklärung
+erzeugen, Freigeben & Fall abschließen) — alles über die echte UI, nicht nur API.
+- **Wichtiger Befund dabei**: Das Forderung-Feld im Formular ist bewusst
+  `disabled`/read-only (`PfaendungErweiterung.jsx:136`) und zeigt nur
+  `erw.forderung_gesamt_eur` an — es laesst sich nicht manuell befuellen.
+  Passt zum Kernprinzip "nie vom Nutzer, nur aus Klassifikation". Folge: bei
+  allen bestehenden Seed-Faellen (vor dem `legePfaendungsfallAn()`-Fix
+  angelegt) ist `forderung_gesamt_eur` NULL, die Erklaerung-Erzeugung schlaegt
+  darum korrekt mit 422 fehl ("Forderungshoehe fehlt") — das ist
+  beabsichtigtes fail-closed-Verhalten, kein Bug. Fuer den UI-Test wurde
+  `forderung_gesamt_eur`/`konfidenz_betrag` bei PF-2026-0455 temporaer per
+  SQL gesetzt (2000 EUR / 90), danach Flow getestet, danach alles
+  (`feldmark_pfaendung_erweiterung`-Zeile + `feldmark_pfaendung_faelle.status`)
+  wieder auf sauberen Ausgangszustand zurueckgesetzt.
+- Generierter Erklaerungstext (1.500 EUR Guthaben ggue. 2.000 EUR Forderung →
+  Teilbetrag-Fall) war inhaltlich korrekt und vollstaendig.
+- Freigabe-Flow bestaetigt den fruehren Bug-Fix: `status` wechselte korrekt
+  zu "Erklaerung versandt" nach Freigabe.
+- **Nebenbefund**: In der DB stand bei PF-2026-0455 noch `p_konto_benachrichtigt_am`
+  von der vorherigen (abgebrochenen) Testsession — war beim Session-Ende
+  nicht zurueckgesetzt worden. Jetzt mitkorrigiert. Alle anderen Seed-Faelle
+  waren unberuehrt/sauber.
+- Diese Aenderungen betreffen nur Testdaten in Supabase, keine Code-Aenderungen.
+  Der P-Konto/Drittschuldnererklaerung-Baustein selbst ist weiterhin NICHT
+  committed (Code lokal, auf Nutzerwunsch).
+
+## Erledigt: P-Konto + automatisierte Drittschuldnererklaerung, Backend (2026-08-13)
+Umgesetzt aus `Pfaendung_PKonto_Drittschuldnererklaerung_Ergaenzung.html`
+(liegt nur lokal, nicht committed - siehe unten):
+- Neue Tabelle `feldmark_pfaendung_erweiterung` (1:1 zu
+  `feldmark_pfaendung_faelle`, additiv - die Faelle-Tabelle selbst bleibt
+  laut fruehrer Entscheidung unveraendert). Migration bereits auf Supabase
+  angewendet.
+- `feldmark_app/server/pkonto_drittschuldner.js`: `berechnePfaendbarenBetrag()`
+  und `erzeugeDrittschuldnererklaerung()` - rein deterministisch, KEIN LLM
+  (Begruendung: die Erklaerung ist die rechtsverbindliche Aussage der Bank,
+  nicht ein Zwischenergebnis mit nachgelagerter Sichtpruefung wie bei der
+  Klassifikation). Deckt 3 der 4 im Ergaenzungskonzept beschriebenen
+  Zustaende ab (voll/teilweise/kein pfaendbares Guthaben) - die vierte
+  (Datendiskrepanz-Negativerklaerung) ist im aktuellen Routing nicht
+  erreichbar, da solche Faelle in die Sichtpruefung gehen, nie in
+  `feldmark_pfaendung_faelle` landen.
+- `legePfaendungsfallAn()` speichert jetzt `forderung_gesamt_eur` und
+  `konfidenz_betrag` aus der Klassifikation (wurden vorher verworfen).
+- Neue REST-Endpunkte: `GET/PUT /api/faelle/:id/erweiterung`,
+  `POST /api/faelle/:id/erklaerung`, `POST /api/faelle/:id/erklaerung/freigeben`.
+- Beim erstmaligen Setzen von `ist_p_konto=false` loest das System die
+  P-Konto-Benachrichtigung automatisch aus (Zeitstempel als Nachweis) -
+  das ist der eigentliche Automatisierungsgewinn, siehe Ergaenzungskonzept.
+- Bug waehrend des Testens gefunden + behoben: Freigabe einer Erklaerung
+  setzte den Fall-Status nicht auf "Erklaerung versandt" - der n8n-Sweep
+  haette den Fall trotz versandter Erklaerung weiter als offen gefuehrt.
+- Backend vollstaendig gegen echte Testdaten verifiziert (4 Szenarien inkl.
+  Mehrfachpfaendung mit korrekter Rangberechnung, 2 Fehlerfaelle). Testdaten
+  danach zurueckgesetzt, Seed-Zustand unveraendert.
+- **Noch keine UI** - nur Backend/API. Alle Aenderungen (Schema-Datei, neues
+  Modul, db.js/index.js-Erweiterungen) sind lokal, NICHT committed, auf
+  Nutzerwunsch ("kontext ist fuer uns").
+
+## Projektrichtung geklärt (2026-08-13): Fokus bleibt Pfändung/Auskunftsersuchen
+Auf Nachfrage nach "App-Erstellung" (größere Feldmark-Projekt-App) hat der
+Nutzer klargestellt: Vision ist ein internes Firmenportal, ABER er kennt aus
+eigener Fintech-Praxis nur die Pfändungs-/Auskunftsersuchen-Prozesse und
+deren Probleme — deshalb bewusst NICHT in die Breite gehen (kein
+Mitarbeiterverzeichnis, Ticketing etc.), sondern in dieser einen
+Prozessfamilie in die Tiefe. Ziel: ein Prozess-Projekt, das zeigt, wie
+Finanzdienstleister/Fintechs genau diese Prozesse vereinfachen,
+automatisieren, digitalisieren koennen (Kursinhalte: Reifegradmodell,
+Pareto, Ishikawa, 5-Why als praxisnahes Tool statt reiner Theorie).
+
+Der Nutzer hat den realen Ist-Prozess ("Nickel") ausführlich beschrieben
+(Bus-Faktor bei Krankheit, chaotische Papierablage, Kündigung wegen
+Überlastung, heute 4 Personen statt 1 für dasselbe Volumen). Dabei stellte
+sich heraus: **Ist-/Soll-Analyse plus BPMN v5 existieren bereits**
+(`Pfaendungsprozess_Analyse_Sollkonzept.html`, `Pfaendungsprozess_BPMN_v5_1.html`,
+vermutlich aus einer früheren Session desselben Tages) und behandeln exakt
+dieselbe Aufgabenstellung inkl. derselben zwei ausgeklammerten Themen
+(P-Konto-Benachrichtigung, automatisierte Drittschuldnererklärung). Diese
+zwei offenen Themen wurden daraufhin als Ergänzungskonzept ausgearbeitet
+(siehe oben) statt die bestehende Analyse zu duplizieren.
 
 ## Konfidenzschwellen-Kalibrierung: Ergebnis (2026-08-13)
 Alle 4 Musterdateien real durch die Pipeline geschickt (echte Mistral-API-

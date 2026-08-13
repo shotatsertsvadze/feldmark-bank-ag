@@ -125,6 +125,15 @@ export async function legePfaendungsfallAn(klassifikation, eingang) {
       eingang.vorgesetzte_email ?? null,
     ]
   );
+  // forderung_gesamt_eur/konfidenz_betrag wurden bisher an dieser Stelle
+  // verworfen - jetzt in der Erweiterungstabelle mitgefuehrt, weil die
+  // P-Konto-Pfaendbarkeitsberechnung und die Drittschuldnererklaerung
+  // beide die Forderungshoehe brauchen (siehe pkonto_drittschuldner.js).
+  await pool.query(
+    `INSERT INTO feldmark_pfaendung_erweiterung (fall_id, forderung_gesamt_eur, konfidenz_betrag)
+     VALUES ($1, $2, $3)`,
+    [fallId, pfaendung.forderung_gesamt_eur ?? null, pfaendung.konfidenz_betrag ?? null]
+  );
   await protokolliere("feldmark_pfaendung_protokoll", fallId, "fall_angelegt", eingang.zustelldatum);
 
   return { angelegt: true, fall_id: fallId, tabelle: "feldmark_pfaendung_faelle" };
@@ -189,6 +198,14 @@ export async function protokolliereVierAugen(tabelle, fallId, eingangsdatumIso) 
   const protokollTabelle =
     tabelle === "feldmark_pfaendung_faelle" ? "feldmark_pfaendung_protokoll" : "feldmark_auskunftsersuchen_protokoll";
   await protokolliere(protokollTabelle, fallId, "vier_augen_erforderlich", eingangsdatumIso);
+}
+
+/** Protokolliert, wenn die weiche Vier-Augen-Warnung bei Freigabe der
+ * Drittschuldnererklaerung bewusst uebersteuert wurde (dieselbe Person hat
+ * Guthaben erfasst UND freigegeben). Kein Auth-System vorhanden, daher kein
+ * hartes Blockieren moeglich - siehe KONTEXT.md. */
+export async function protokolliereVierAugenErklaerungUebersteuert(fallId, eingangsdatumIso) {
+  await protokolliere("feldmark_pfaendung_protokoll", fallId, "vier_augen_erklaerung_uebersteuert", eingangsdatumIso);
 }
 
 /** Ereignis "Erinnerung erhalten" gegen einen bereits bestehenden Fall -
@@ -265,4 +282,136 @@ export async function listeSichtpruefung() {
      ORDER  BY erzeugt_am`
   );
   return rows;
+}
+
+/**
+ * Pfaendungsfall inkl. P-Konto-/Drittschuldnererklaerung-Erweiterung, fuer
+ * die Fall-Detailansicht. Gibt null zurueck, wenn der Fall nicht existiert.
+ */
+export async function ermittleFallMitErweiterung(fallId) {
+  const { rows } = await getPool().query(
+    `SELECT f.fall_id, f.aktenzeichen, f.glaeubiger, f.schuldner,
+            to_char(f.zustelldatum, 'YYYY-MM-DD') AS zustelldatum, f.zustellkanal, f.status,
+            e.forderung_gesamt_eur, e.konfidenz_betrag, e.ist_p_konto,
+            e.p_konto_freibetrag_erhoehung, e.p_konto_benachrichtigt_am,
+            e.guthaben_eur, e.guthaben_erfasst_am, e.guthaben_erfasst_von, e.erklaerung_text,
+            e.erklaerung_erzeugt_am, e.erklaerung_freigegeben_von, e.erklaerung_freigegeben_am,
+            e.erklaerung_versendet_von, e.erklaerung_versendet_am
+     FROM   feldmark_pfaendung_faelle f
+     JOIN   feldmark_pfaendung_erweiterung e ON e.fall_id = f.fall_id
+     WHERE  f.fall_id = $1`,
+    [fallId]
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Andere offene Pfaendungsfaelle desselben Schuldners (fuer Rang und
+ * Pflichtangabe 3 nach § 840 ZPO). Namensabgleich ist bewusst simpel
+ * (exakter Textvergleich, case-insensitive) - ein robuster Identitaets-
+ * abgleich (IBAN/Geburtsdatum) ist im aktuellen Datenmodell nicht
+ * vorhanden, siehe Ergaenzungskonzept, offene Punkte.
+ */
+export async function findeAndereOffenePfaendungen(schuldner, fallIdAusschliessen) {
+  const { rows } = await getPool().query(
+    `SELECT fall_id, glaeubiger, to_char(zustelldatum, 'YYYY-MM-DD') AS zustelldatum
+     FROM   feldmark_pfaendung_faelle
+     WHERE  lower(schuldner) = lower($1)
+       AND  fall_id <> $2
+       AND  status NOT IN ('Erklaerung versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis')
+     ORDER  BY zustelldatum`,
+    [schuldner, fallIdAusschliessen]
+  );
+  return rows;
+}
+
+/** Aktualisiert die manuell erfassten Felder (P-Konto-Status, Guthaben). */
+export async function aktualisiereErweiterung(fallId, { istPKonto, freibetragErhoehungEur, guthabenEur, guthabenErfasstVon }) {
+  const { rows } = await getPool().query(
+    `UPDATE feldmark_pfaendung_erweiterung
+     SET    ist_p_konto = COALESCE($2, ist_p_konto),
+            p_konto_freibetrag_erhoehung = COALESCE($3, p_konto_freibetrag_erhoehung),
+            guthaben_eur = COALESCE($4, guthaben_eur),
+            guthaben_erfasst_am = CASE WHEN $4 IS NOT NULL THEN now() ELSE guthaben_erfasst_am END,
+            guthaben_erfasst_von = CASE WHEN $4 IS NOT NULL THEN $5 ELSE guthaben_erfasst_von END
+     WHERE  fall_id = $1
+     RETURNING *`,
+    [fallId, istPKonto ?? null, freibetragErhoehungEur ?? null, guthabenEur ?? null, guthabenErfasstVon ?? null]
+  );
+  return rows[0] ?? null;
+}
+
+/** Markiert die P-Konto-Benachrichtigung als versandt (Zeitstempel = Nachweis). */
+export async function markierePKontoBenachrichtigt(fallId) {
+  await getPool().query(
+    `UPDATE feldmark_pfaendung_erweiterung SET p_konto_benachrichtigt_am = now() WHERE fall_id = $1`,
+    [fallId]
+  );
+}
+
+/** Speichert den erzeugten Erklaerungstext (noch nicht freigegeben).
+ * Setzt auch einen evtl. vorhandenen Freigabe-/Versand-Nachweis einer
+ * FRUEHEREN Erklaerung fuer denselben Fall zurueck - sonst wuerde ein neu
+ * erzeugter Text faelschlich als "bereits versendet" angezeigt, obwohl nur
+ * die vorherige Fassung tatsaechlich versendet wurde. */
+export async function speichereErklaerung(fallId, text) {
+  await getPool().query(
+    `UPDATE feldmark_pfaendung_erweiterung
+     SET    erklaerung_text = $2, erklaerung_erzeugt_am = now(),
+            erklaerung_freigegeben_von = NULL, erklaerung_freigegeben_am = NULL,
+            erklaerung_versendet_von = NULL, erklaerung_versendet_am = NULL
+     WHERE  fall_id = $1`,
+    [fallId, text]
+  );
+}
+
+/**
+ * Freigabe = inhaltliche Bestaetigung des erzeugten Texts durch einen
+ * Mitarbeiter. Setzt NUR den Zwischenstatus "Erklaerung freigegeben",
+ * NICHT mehr "Erklaerung versandt" (Redesign, siehe KONTEXT.md) - der
+ * fruehere Direktsprung war irrefuehrend, weil kein echter Versand-Kanal
+ * angebunden ist und "freigegeben" damit faktisch "beim Empfaenger
+ * angekommen" vortaeuschte. Der Fall bleibt bewusst in der offenen Liste
+ * (listeOffeneFaelle/findeAndereOffenePfaendungen schliessen weiterhin nur
+ * 'Erklaerung versandt' aus), bis bestaetigeVersand() den zweiten Schritt
+ * abschliesst.
+ */
+export async function gibErklaerungFrei(fallId, freigegebenVon) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `UPDATE feldmark_pfaendung_erweiterung
+     SET    erklaerung_freigegeben_von = $2, erklaerung_freigegeben_am = now()
+     WHERE  fall_id = $1 AND erklaerung_text IS NOT NULL
+     RETURNING *`,
+    [fallId, freigegebenVon]
+  );
+  if (!rows[0]) return null;
+  await pool.query(
+    `UPDATE feldmark_pfaendung_faelle SET status = 'Erklaerung freigegeben', letzte_aktion_am = now() WHERE fall_id = $1`,
+    [fallId]
+  );
+  return rows[0];
+}
+
+/**
+ * Zweiter Schritt nach Freigabe: der tatsaechliche (manuelle) Versand wird
+ * bestaetigt. Erst hier wechselt der Fall-Status auf "Erklaerung versandt"
+ * und faellt aus der n8n-Fristueberwachung heraus - siehe Kommentar bei
+ * gibErklaerungFrei() fuer die Begruendung der Trennung.
+ */
+export async function bestaetigeVersand(fallId, versendetVon) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `UPDATE feldmark_pfaendung_erweiterung
+     SET    erklaerung_versendet_von = $2, erklaerung_versendet_am = now()
+     WHERE  fall_id = $1 AND erklaerung_freigegeben_am IS NOT NULL
+     RETURNING *`,
+    [fallId, versendetVon]
+  );
+  if (!rows[0]) return null;
+  await pool.query(
+    `UPDATE feldmark_pfaendung_faelle SET status = 'Erklaerung versandt', letzte_aktion_am = now() WHERE fall_id = $1`,
+    [fallId]
+  );
+  return rows[0];
 }
