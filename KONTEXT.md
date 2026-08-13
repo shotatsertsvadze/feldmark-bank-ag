@@ -10,6 +10,50 @@ gehört jetzt eine App-Shell mit Sidebar-Navigation, sodass sie als erste von
 perspektivisch mehreren Features der größeren Feldmark-Projekt-App fungiert
 (siehe Architektur unten).
 
+## Neu fürs Wiedereinsteigen: Methodik-Dokument (2026-08-13/14, zweite Nacht autonomer Arbeit)
+Nutzer bat explizit, mit dem Projekt autonom weiterzuarbeiten (zweite Nacht in Folge,
+`/loop` dynamisch, Check-in 07:45), und fragte nach meiner Einschätzung zur Projektrichtung.
+Befund: Code + Sollkonzept sind bereits sehr weit (siehe unten), aber die vier
+Kursmethoden, die der Nutzer explizit als Ziel genannt hatte — **Reifegradmodell,
+Pareto, Ishikawa, 5-Why** — kamen in keinem der bestehenden Dokumente wörtlich vor
+(per grep verifiziert). Das war die am höchsten priorisierte Lücke für ein
+Digitalisierungsmanager-Abschlussprojekt — mehr Code hätte diese Lücke nicht geschlossen.
+
+**Neu erstellt: `Pfaendungsprozess_Methodenanwendung.html`** — dockt an
+`Pfaendungsprozess_Analyse_Sollkonzept.html` an, dupliziert dessen Mengengerüst/KPI-Arbeit
+nicht, sondern verdichtet dieselben echten Zahlen mit den vier benannten Methoden:
+- **Reifegradmodell**: 5-Stufen-Skala, je Prozessschritt Ist/Ziel/tatsächlich Erreicht
+  bewertet — **ehrlich, nicht schönredend**: 5 von 8 Schritten erreichen den
+  Sollkonzept-Zielreifegrad (inkl. der heute Nacht redesignten Drittschuldnererklärung),
+  3 nicht (Datendiskrepanz-Klärungs-Workflow, echter Versand-Kanal, KPI-Messung).
+- **Pareto**: zwei Lesarten. (1) Fallvolumen der vier Sonderaufwands-Kategorien
+  (Nullguthaben/Teilguthaben/Polizei-StA/Datendiskrepanz) — echte SVG-Pareto-Grafik,
+  Top-2-Ursachen = 66,3 % des Sonderaufwands. (2) Fristbudget-Verlust — hier eine
+  **eigene, klar gekennzeichnete Verdichtung** (Papierkanal-Latenz × Volumen ≈ 158–473
+  Fall-Tage/Monat), die nahelegt, dass die Papierkanal-Latenz den vom Sollkonzept selbst
+  als „teuersten Befund" bezeichneten Datendiskrepanz-Block (95 Fall-Tage/Monat) sogar
+  übertreffen könnte — als offene, zu messende Frage markiert, nicht als Fakt behauptet.
+- **Ishikawa**: Fischgrätdiagramm (SVG) zu „Prozess ohne Reserve", 4 Äste
+  (Mensch/Prozess/System/Umfeld), 8 Teilursachen — alle aus Sollkonzept Abschnitt 2 bzw.
+  P-Konto-Ergänzung übernommen, keine neu erfundenen Ursachen.
+- **5-Why**: konkreter Fristausfall-Fall (Bus-Faktor bei Krankheit) 5 Ebenen tief bis zur
+  strukturellen Wurzel („kein Fallobjekt mit Vertretungsfähigkeit"), explizit verknüpft
+  mit dem, was der gebaute Baustein davon bereits löst (bearbeiter_email/vertretung_email/
+  vorgesetzte_email + n8n-Eskalation).
+- **Wichtigster inhaltlicher Fund dabei**: Der Datendiskrepanz-Workflow (Sollkonzept 3.1,
+  A1–A4), den das Sollkonzept selbst als „mit Abstand bestes Aufwand-Nutzen-Verhältnis im
+  gesamten Konzept" bezeichnet (Abschnitt 7, Q1), ist **nicht im Code umgesetzt** (per grep
+  verifiziert) — taucht sowohl im Reifegradmodell als auch in der Pareto-Analyse als
+  einzige verbleibende Lücke auf. Klare Kandidat für den nächsten Bau-Schritt, falls als
+  nächstes wieder Code statt Analyse gefragt ist.
+- Design: exakt dieselbe CSS/Typografie wie die bestehenden Analyse-Dokumente
+  übernommen (kein neuer Look) — bewusste Entscheidung, kein Rebrand.
+- Ein echter Rendering-Bug beim Bauen gefunden+behoben: die Ishikawa-SVG-Beschriftungen
+  liefen anfangs über den viewBox-Rand hinaus (zu lange Labels, zu wenig Randabstand) —
+  im Browser sichtbar geprüft, mit kürzeren Labels und breiterem viewBox neu gebaut,
+  danach im Browser bestätigt fehlerfrei.
+- Committed (lokal, kein Push, wie die ganze Nacht zuvor).
+
 ## Repo & Cloud-Ressourcen
 - GitHub (privat): https://github.com/shotatsertsvadze/feldmark-bank-ag — eigenständiges Repo, NICHT im Home-Verzeichnis-Repo (das zeigt auf ein anderes Projekt, `fintech-fraud-detection-pipeline` — nicht anfassen).
 - Supabase-Projekt: **„shotatsertsvadze's Project"** (`ziwzymarlakoxrgdesvw`), Region eu-west-2. Enthält auch den Fintech-Reifegrad-Checker (andere Tabellen, kein Konflikt).
