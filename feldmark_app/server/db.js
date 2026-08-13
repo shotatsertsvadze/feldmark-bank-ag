@@ -353,15 +353,31 @@ export async function markierePKontoBenachrichtigt(fallId) {
  * Setzt auch einen evtl. vorhandenen Freigabe-/Versand-Nachweis einer
  * FRUEHEREN Erklaerung fuer denselben Fall zurueck - sonst wuerde ein neu
  * erzeugter Text faelschlich als "bereits versendet" angezeigt, obwohl nur
- * die vorherige Fassung tatsaechlich versendet wurde. */
+ * die vorherige Fassung tatsaechlich versendet wurde. Setzt aus demselben
+ * Grund auch fall.status zurueck auf 'Geprueft', falls der Fall bereits bei
+ * 'Erklaerung freigegeben' oder 'Erklaerung versandt' stand - sonst wuerde
+ * eine frisch erzeugte, noch UNGEPRUEFTE Erklaerung faelschlich als
+ * abgeschlossen gelten: der Fall verschwindet dann aus listeOffeneFaelle()
+ * und aus findeAndereOffenePfaendungen() (beide filtern 'Erklaerung
+ * versandt' heraus), obwohl er weiterhin ueberwacht werden muss - und ein
+ * ANDERER Fall desselben Schuldners wuerde bei der Rang-/Pflichtangabe-3-
+ * Berechnung eine zu kurze Glaeubigerliste bekommen (Fund aus dem
+ * autonomen Nacht-Review, siehe KONTEXT.md). */
 export async function speichereErklaerung(fallId, text) {
-  await getPool().query(
+  const pool = getPool();
+  await pool.query(
     `UPDATE feldmark_pfaendung_erweiterung
      SET    erklaerung_text = $2, erklaerung_erzeugt_am = now(),
             erklaerung_freigegeben_von = NULL, erklaerung_freigegeben_am = NULL,
             erklaerung_versendet_von = NULL, erklaerung_versendet_am = NULL
      WHERE  fall_id = $1`,
     [fallId, text]
+  );
+  await pool.query(
+    `UPDATE feldmark_pfaendung_faelle
+     SET    status = 'Geprueft', letzte_aktion_am = now()
+     WHERE  fall_id = $1 AND status IN ('Erklaerung freigegeben', 'Erklaerung versandt')`,
+    [fallId]
   );
 }
 

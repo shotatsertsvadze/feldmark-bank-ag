@@ -75,6 +75,11 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
     };
   }, [fallId]);
 
+  // Gibt { ok, p_konto_benachrichtigung_ausgeloest } statt eines rohen
+  // Booleans zurueck - vorher war "false" doppeldeutig zwischen "Speichern
+  // fehlgeschlagen" und "erfolgreich gespeichert, nur keine Benachrichtigung
+  // ausgeloest", wodurch erklaerungErstellen() einen fehlgeschlagenen
+  // Speicherversuch nicht von einem erfolgreichen unterscheiden konnte.
   async function speichern() {
     setSpeichertErw(true);
     setFehler(null);
@@ -86,13 +91,10 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
         guthabenErfasstVon: guthabenErfasstVon.trim() === "" ? null : guthabenErfasstVon.trim(),
       });
       setErw(erweiterung);
-      if (p_konto_benachrichtigung_ausgeloest) {
-        setFehler(null);
-      }
-      return p_konto_benachrichtigung_ausgeloest;
+      return { ok: true, p_konto_benachrichtigung_ausgeloest };
     } catch (e) {
       setFehler(String(e.message || e));
-      return false;
+      return { ok: false, p_konto_benachrichtigung_ausgeloest: false };
     } finally {
       setSpeichertErw(false);
     }
@@ -103,7 +105,12 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
     setFehler(null);
     setVierAugenWarnung(null);
     try {
-      await speichern();
+      const { ok } = await speichern();
+      // Ohne diesen Check wuerde bei einem fehlgeschlagenen Speichern (z.B.
+      // Netzwerkfehler) trotzdem eine Erklaerung erzeugt - aber auf Basis
+      // des zuletzt GESPEICHERTEN, nicht des gerade eingegebenen Guthabens,
+      // ohne dass das aus der generischen Fehlermeldung ersichtlich waere.
+      if (!ok) return; // finally unten setzt erzeugtErklaerung zurueck
       const text = await erklaerungErzeugen(fallId);
       setErw((vorher) => ({
         ...vorher,

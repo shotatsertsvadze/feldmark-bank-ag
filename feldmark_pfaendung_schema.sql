@@ -22,9 +22,16 @@ CREATE TABLE feldmark_pfaendung_faelle (
     zustellkanal          text        NOT NULL
                           CHECK (zustellkanal IN ('Papier', 'eBO', 'E-Mail', 'Fax')),
     status                text        NOT NULL
+                          -- 'Erklaerung freigegeben' kam mit dem Freigabe-/
+                          -- Versand-Trennung-Redesign hinzu (siehe KONTEXT.md)
+                          -- - live auf Supabase per ALTER TABLE nachgezogen,
+                          -- hier ebenfalls ergaenzt, damit eine frische
+                          -- Provisionierung aus dieser Datei nicht denselben
+                          -- CHECK-Constraint-Fehler reproduziert.
                           CHECK (status IN ('Eingegangen',
                                             'In Bearbeitung',
                                             'Geprueft',
+                                            'Erklaerung freigegeben',
                                             'Erklaerung versandt',
                                             'Abgeschlossen',
                                             'Abgeschlossen mit Fristversaeumnis')),

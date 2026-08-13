@@ -80,19 +80,16 @@ Aktenzeichen-Abgleich.
 - Redesign Freigabe-/Versand-Trennung, Vier-Augen, Konfidenz-/Alters-
   Warnhinweise: **umgesetzt, getestet, siehe Eintrag unten (2026-08-13,
   autonomer Nacht-Loop).**
-- Verbleibende Luecke aus dieser Nacht (bewusst nicht geloest, siehe unten):
-  wird nach Freigabe/Versand eine NEUE Drittschuldnererklaerung fuer
-  denselben Fall erzeugt (z.B. weil sich das Guthaben geaendert hat),
-  bleibt `fall.status` auf "Erklaerung versandt"/"Erklaerung freigegeben"
-  stehen, obwohl die neue Fassung wieder bei "erzeugt, nicht freigegeben"
-  anfaengt (erklaerung_freigegeben_am/erklaerung_versendet_am werden zwar
-  korrekt zurueckgesetzt, `fall.status` aber nicht - die volle
-  Status-Wertemenge wird von n8n mitverwendet und war in dieser Session
-  nicht vollstaendig genug bekannt, um sie gefahrlos anzufassen). Praktisch
-  selten (Erklaerung wird normalerweise nicht nach Versand neu erzeugt),
-  aber ein sauberer Fix waere: `fall.status` beim Erzeugen einer neuen
-  Erklaerung ebenfalls zuruecksetzen, sobald der volle Status-Automat
-  bekannt ist.
+- Der Status-Reset-Bug beim Neu-Erzeugen einer Erklaerung (siehe direkt
+  unten, Code-Review-Eintrag) ist **behoben**, nicht mehr offen.
+- Verbleibend offen (siehe Code-Review-Eintrag fuer Details, bewusst nicht
+  in derselben Nacht geloest): P-Konto-Benachrichtigung feuert beim
+  allerersten Speichern jedes Falls (nicht erst bei bewusster "kein
+  P-Konto"-Bestaetigung) - braucht eine Produktentscheidung, kein
+  Code-Fix; `aktualisiereErweiterung()` kann `guthaben_eur`/
+  `p_konto_freibetrag_erhoehung` nicht per leerem Feld zuruecksetzen
+  (COALESCE-Falle); `P_KONTO_GRUNDFREIBETRAG_EUR`/`SCHWELLE_KONFIDENZ_BETRAG`
+  sind Frontend/Backend dupliziert statt vom Server bereitgestellt.
 
 ## Erledigt: Redesign Freigabe-/Versand-Trennung + Vier-Augen + Warnhinweise (2026-08-13, autonomer Nacht-Loop)
 Auf Nutzerwunsch autonom über Nacht umgesetzt (`/loop`, dynamischer Modus,
@@ -169,6 +166,91 @@ Testartefakte enthalten).
 **Git**: Auf ausdrücklichen Nutzerwunsch diesmal committed (vorherige
 Session-Regel "nicht committen" war zeitlich begrenzt gültig, wurde in
 dieser Session vom Nutzer aufgehoben) — lokal, kein Push.
+
+## Erledigt: Selbst-Code-Review nach dem Redesign (2026-08-13, autonomer Nacht-Loop, Fortsetzung)
+Nach dem ersten Commit noch in derselben Nacht: `/code-review` (medium,
+8 Finder-Winkel parallel als Subagents) auf den eigenen Diff angesetzt,
+bevor der Nutzer morgens draufschaut. 5 der 8 gemeldeten Befunde behoben,
+3 bewusst nur dokumentiert (siehe unten). Alle Fixes erneut über die echte
+Browser-UI bzw. direkten API-Aufruf getestet, Testdaten wieder
+zurückgesetzt, Build+Syntax-Check grün, zweiter Commit.
+
+**Behoben:**
+1. **`speichereErklaerung()` setzte `fall.status` nie zurück** beim
+   Neu-Erzeugen einer Erklärung für einen Fall, der schon bei "Erklaerung
+   freigegeben"/"Erklaerung versandt" stand (3 von 7 Review-Agents fanden
+   das unabhängig voneinander — stärkster Befund der Nacht). Konsequenz war
+   schlimmer als nur ein falsches Status-Label: der Fall verschwand aus
+   `listeOffeneFaelle()` (Dashboard + n8n-Fristüberwachung) UND aus
+   `findeAndereOffenePfaendungen()`, wodurch die Pflichtangabe-3-Liste
+   (§ 840 ZPO, "andere Gläubiger") in der Erklärung eines GANZ ANDEREN
+   Falls desselben Schuldners zu kurz geraten wäre. Fix: `speichereErklaerung()`
+   setzt `fall.status` jetzt zusätzlich auf 'Geprueft' zurück, wenn er bei
+   einem der beiden fortgeschrittenen Werte stand — möglich, weil die
+   Session inzwischen die volle gültige Status-Wertemenge kennt (aus dem
+   CHECK-Constraint, den sie selbst erweitert hat). Live getestet: Fall
+   künstlich bis "Erklaerung versandt" durchlaufen lassen (verschwindet
+   korrekt aus der offenen Liste), dann per direktem API-Aufruf neu erzeugt
+   (kein UI-Pfad zurück zu einem bereits versandten Fall — selbst ein
+   Nebenbefund, siehe unten) — Status sprang korrekt zurück auf "Geprueft",
+   Fall tauchte in der Fallübersicht wieder auf.
+2. **`feldmark_pfaendung_schema.sql` (die ORIGINALE Bootstrap-Datei, nicht
+   die Erweiterungs-Schema-Datei) war nie um den neuen Statuswert
+   "Erklaerung freigegeben" ergänzt worden** — 3 von 7 Agents fanden das
+   unabhängig. Genau der Fehler, der heute Nacht schon einmal live auf
+   Supabase auftrat (siehe oben), wäre bei jeder Neu-Provisionierung aus
+   dieser Datei erneut aufgetreten. Nachgezogen.
+3. **Vier-Augen-Warnung ließ sich trivial umgehen**: das Feld "Erfasst von"
+   ist bewusst optional, aber wenn es leer blieb, wertete der Server das
+   als "andere Person" statt als "unbekannt" — Leerlassen war der bequemste
+   Weg, die Kontrolle zu umgehen. Fix: ein fehlendes `guthaben_erfasst_von`
+   löst jetzt ebenfalls die 409-Bestätigung aus, mit eigener Meldung
+   ("... ohne 'Erfasst von'-Angabe gespeichert ..."). Das Formularfeld
+   bleibt bewusst optional (keine erzwungene Pflichtfeld-UX-Änderung) — nur
+   die Prüfung selbst behandelt "unbekannt" nicht mehr als "unbedenklich".
+   Live getestet (409 korrekt ausgelöst, Override protokolliert).
+4. **`erklaerungErstellen()` ignorierte, ob `speichern()` erfolgreich war**
+   — bei einem fehlgeschlagenen Speichern wäre trotzdem eine Erklärung aus
+   dem zuletzt gespeicherten (nicht dem gerade eingegebenen) Guthaben
+   erzeugt worden, ohne dass der generische Fehlerbanner das erkennen ließe.
+   `speichern()` gibt jetzt `{ ok, p_konto_benachrichtigung_ausgeloest }`
+   zurück statt eines mehrdeutigen rohen Booleans; `erklaerungErstellen()`
+   bricht bei `!ok` sauber ab.
+5. Toter No-Op-Zweig (`if (p_konto_benachrichtigung_ausgeloest) { setFehler(null); }`
+   — setzte einen bereits `null`-Wert erneut auf `null`) entfernt.
+
+**Bewusst nur dokumentiert, nicht gefixt (mit Begründung):**
+- P-Konto-Benachrichtigung feuert beim allerersten Speichern jedes Falls,
+  nicht erst bei bewusster "kein P-Konto"-Bestätigung (`ist_p_konto`
+  defaultet auf `false`, Checkbox startet ungecheckt) — **vorbestehendes
+  Verhalten**, nicht heute Nacht eingeführt, nur die Funktion wurde
+  angefasst (neuer Parameter). Ein Fix braucht eine Produktentscheidung
+  (z.B. tri-state Feld "geprüft/ja/nein" statt Boolean), keine einseitige
+  Code-Änderung mitten in der Nacht.
+- `aktualisiereErweiterung()`: COALESCE verhindert, `guthaben_eur`/
+  `p_konto_freibetrag_erhoehung` per leerem Feld + Speichern zurück auf
+  leer/0 zu setzen (leeres Feld sendet `null`, COALESCE behält den alten
+  Wert). Ebenfalls vorbestehend. Ein sauberer Fix bräuchte eine explizite
+  "loeschen vs. nicht anfassen"-Unterscheidung im API-Vertrag (z.B. ein
+  extra Flag) — Scope-Erweiterung, die besser mit Rücksprache entschieden
+  wird als um Mitternacht allein.
+- `P_KONTO_GRUNDFREIBETRAG_EUR` und `SCHWELLE_KONFIDENZ_BETRAG` sind
+  Frontend/Backend dupliziert (Backend-Wert ist bereits exportiert, wird
+  aber nicht vom Server ausgeliefert). Beide ändern sich laut Kommentar im
+  eigenen Code periodisch per Gesetz/Kalibrierung — sauberster Fix wäre,
+  sie Teil der `GET /erweiterung`-Antwort zu machen, statt sie im Frontend
+  zu duplizieren. Kosmetisch/Drift-Risiko, kein akuter Bug, daher
+  zurückgestellt.
+
+**Nebenbefund beim Testen** (nicht Teil des Reviews, aber real): sobald ein
+Fall den Status "Erklaerung versandt" erreicht, verschwindet er aus der
+Fallübersicht — es gibt aktuell **keinen UI-Weg zurück** zu ihm, falls doch
+einmal eine Korrektur nötig wird (z.B. der hier getestete
+Regenerierungsfall). Der Test dafür lief über einen direkten
+`fetch()`-Aufruf in der Browser-Konsole, nicht über einen Klick. Für den
+seltenen Korrekturfall aktuell nur über direkten DB-/API-Zugriff lösbar —
+kein Bug, aber eine bewusste Lücke, die dem Nutzer hier explizit
+transparent gemacht wird statt sie zu verstecken.
 
 ## Erledigt: UI-Verifikation P-Konto/Drittschuldnererklaerung (2026-08-13, Fortsetzung)
 Dev-Server neu gestartet, Fallübersicht → PF-2026-0455 aufgeklappt, kompletten

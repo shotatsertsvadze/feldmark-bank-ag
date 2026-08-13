@@ -251,6 +251,14 @@ app.post("/api/faelle/:fallId/erklaerung", async (req, res) => {
 // Erfasser:in (Textvergleich, whitespace-/case-normalisiert). Serverseitig
 // geprueft statt nur im Frontend, damit ein direkter API-Aufruf die
 // Warnung nicht umgehen kann.
+//
+// "Erfasst von" ist im Formular bewusst optional (siehe UI) - das darf
+// aber nicht dazu fuehren, dass die Pruefung durch einfaches Leerlassen
+// umgangen wird. Ein fehlender guthaben_erfasst_von zaehlt deshalb
+// ebenfalls als Warnfall ("Vier-Augen kann nicht geprueft werden"), nicht
+// als "andere Person, also unbedenklich" - sonst waere das Leerlassen des
+// Feldes der bequemste Weg, die Kontrolle zu umgehen (Fund aus dem
+// autonomen Nacht-Review, siehe KONTEXT.md).
 app.post("/api/faelle/:fallId/erklaerung/freigeben", async (req, res) => {
   try {
     const freigegebenVon = req.body.freigegeben_von;
@@ -260,19 +268,23 @@ app.post("/api/faelle/:fallId/erklaerung/freigeben", async (req, res) => {
     const fall = await db.ermittleFallMitErweiterung(req.params.fallId);
     if (!fall) return res.status(404).json({ fehler: "Fall nicht gefunden." });
 
+    const erfasserUnbekannt = !fall.guthaben_erfasst_von;
     const gleichePerson =
-      !!fall.guthaben_erfasst_von &&
-      fall.guthaben_erfasst_von.trim().toLowerCase() === freigegebenVon.trim().toLowerCase();
-    if (gleichePerson && !vierAugenBestaetigt) {
+      !erfasserUnbekannt && fall.guthaben_erfasst_von.trim().toLowerCase() === freigegebenVon.trim().toLowerCase();
+    const brauchtBestaetigung = erfasserUnbekannt || gleichePerson;
+
+    if (brauchtBestaetigung && !vierAugenBestaetigt) {
       return res.status(409).json({
-        fehler: `"${freigegebenVon}" hat auch zuletzt das Guthaben erfasst - Vier-Augen-Prinzip nicht eingehalten.`,
+        fehler: erfasserUnbekannt
+          ? `Guthaben wurde ohne "Erfasst von"-Angabe gespeichert - Vier-Augen-Prinzip kann nicht geprueft werden.`
+          : `"${freigegebenVon}" hat auch zuletzt das Guthaben erfasst - Vier-Augen-Prinzip nicht eingehalten.`,
         vier_augen_warnung: true,
       });
     }
 
     const ergebnis = await db.gibErklaerungFrei(req.params.fallId, freigegebenVon);
     if (!ergebnis) return res.status(404).json({ fehler: "Fall nicht gefunden oder noch keine Erklaerung erzeugt." });
-    if (gleichePerson) {
+    if (brauchtBestaetigung) {
       await db.protokolliereVierAugenErklaerungUebersteuert(req.params.fallId, fall.zustelldatum);
     }
     res.json({ erweiterung: ergebnis });
