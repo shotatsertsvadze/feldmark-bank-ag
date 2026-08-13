@@ -76,7 +76,34 @@ Aktenzeichen-Abgleich.
 
 ## Nächste sinnvolle Schritte (nicht begonnen)
 - Echten Versand-Kanal an die Platzhalter-Nodes hängen.
-- Konfidenzschwellen (70/85/60) mit echten Testläufen kalibrieren (Startwerte weiterhin ungemessen, siehe unten).
+
+## Konfidenzschwellen-Kalibrierung: Ergebnis (2026-08-13)
+Alle 4 Musterdateien real durch die Pipeline geschickt (echte Mistral-API-
+Calls) und Konfidenzwerte protokolliert:
+
+| Datei | dokumenttyp | konfidenz_typ | konfidenz_betrag | ocr_confidence.min | Routing-Grund |
+|---|---|---|---|---|---|
+| PfUeB.jpg | pfaendungsschreiben | 98 | 0 | 24.5 | OCR-Konfidenz + Betrag unter Schwelle |
+| Auskunftsersuchen_StA_fiktiv.pdf | auskunftsersuchen | 99 | - | 92.3 | Duplikat-Verdacht (nicht Schwellenwert) |
+| Antwort_ZIS_2016.jpeg (Falle 1) | auskunftsersuchen | 95 | - | 53.2 | plausibilitaet_ok=false + OCR-Konfidenz |
+| Wahllisten-Datei (Falle 2) | sonstiges | 95 | - | 52.1 | plausibilitaet_ok=false, dokumenttyp=sonstiges |
+
+**Befund: mit n=4 lässt sich seriös nichts kalibrieren.** In keinem Fall war
+`konfidenz_typ` (70) oder `konfidenz_betrag` (85) der eigentlich
+ausschlaggebende Grenzwert - `konfidenz_typ` liegt in allen 4 Faellen bei
+95-99 (weit ueber der Schwelle, auch bei den beiden Plausibilitaets-Fallen,
+wo `plausibilitaet_ok` bzw. `dokumenttyp=sonstiges` die eigentliche Bremse
+sind), und `konfidenz_betrag` fiel beim einzigen Pfaendungsschreiben auf 0
+(schlechte OCR-Qualitaet dieses konkreten Scans, min. Seitenkonfidenz nur
+24.5%) - weit unter jeder plausiblen Schwelle, liefert also keinen
+Anhaltspunkt fuer den genauen Wert 85. Einzig `SCHWELLE_OCR_KONFIDENZ` (60)
+liegt sinnvoll zwischen den beobachteten Werten (24.5/52.1/53.2 vs. 92.3),
+aber auch das ist mit 4 Punkten kein Kalibrierungslauf, nur eine grobe
+Plausibilitaetspruefung. **Entscheidung: Schwellen unveraendert gelassen**
+(70/85/60 bleiben Startwerte) - eine echte Kalibrierung braucht deutlich
+mehr reale Dokumente mit Werten näher an den Grenzen, idealerweise aus
+echtem Betrieb gesammelt, nicht aus 4 Handverlesenen Mustern.
+Test-Sichtpruefungs-Eintraege aus diesem Lauf wieder aus der DB entfernt.
 
 ## Erledigt: Prozessanalyse-Fixes Routing + n8n-Workflows (2026-08-13)
 Mit dem process-automation-toolkit-Skill analysiert und behoben:
@@ -96,9 +123,15 @@ Mit dem process-automation-toolkit-Skill analysiert und behoben:
   hart auf 2026 codiert, ab 2027 unbemerkt keine Feiertagsverschiebung mehr).
 - **Beide Workflows sind jetzt aktiviert** (vorher `active: false` - liefen
   nur ueber "Manuell testen", der taegliche Schedule-Trigger 07:00/07:15 Uhr
-  griff nicht). Kein Live-Testlauf nach den Fixes ausgefuehrt, um keine
-  zusaetzlichen Protokoll-/Status-Schreibvorgaenge in der echten Supabase-DB
-  auszuloesen - bei Bedarf manuell in n8n ("Manuell testen") pruefen.
+  griff nicht).
+- Nachtraeglich (2026-08-13, zweiter Durchgang): beide Workflows live
+  ausgefuehrt (Executions 26117/26118, Status success, alle offenen Faelle
+  korrekt auf "Kein Handlungsbedarf" - Idempotenz haelt weiterhin). Den
+  Empfaenger-Filter zusaetzlich gezielt mit synthetischem Testfall
+  (`test_workflow`, `vertretung_email: null`) durchlaufen lassen - Ergebnis
+  `empfaenger: "bearbeiter@example.com"`, kein `"null"`, kein Leerkomma.
+  Test schlug danach absichtlich an der FK-Constraint fehl (Test-Fall-ID
+  existiert nicht in `feldmark_pfaendung_faelle`), also kein echter DB-Schreibvorgang.
 
 ## Erledigt: Baustein in Haupt-App eingepackt (2026-08-13)
 `feldmark_klassifikation/` → `feldmark_app/` umbenannt (git mv, History erhalten).
