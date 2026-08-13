@@ -174,8 +174,8 @@ ${JSON_SCHEMA}`;
 // und meldet fehlende Felder ununterscheidbar von "steht wirklich nicht
 // im Dokument". klassifiziereUndExtrahiere() haengt deshalb ein eigenes,
 // vom Code (nicht vom Modell) gesetztes wurde_gekuerzt-Flag an, das
-// bestimmeRouting() unten fuer den Pfaendungsblock hart auf Sichtpruefung
-// zwingt.
+// bestimmeRouting() unten fuer Pfaendungsblock und Auskunftsersuchen hart
+// auf Sichtpruefung zwingt.
 const MAX_MARKDOWN_ZEICHEN = 12000;
 
 /**
@@ -266,6 +266,10 @@ export async function klassifiziereUndExtrahiere(markdown, ocrConfidence = null)
   };
   klassifikation.erinnerung ??= { bezug_aktenzeichen: null, hinweis_text: null };
   klassifikation.wurde_gekuerzt = wurdeGekuerzt;
+  // Fail-closed: fehlt konfidenz_typ (Modellantwort weicht vom Schema ab),
+  // soll das wie "keine Konfidenz" und nicht wie "Schwelle eingehalten"
+  // behandelt werden (undefined < SCHWELLE waere sonst false).
+  klassifikation.konfidenz_typ ??= 0;
 
   return klassifikation;
 }
@@ -281,13 +285,15 @@ export const PFAENDUNGSBLOCK_TYPEN = ["pfaendungsschreiben", "einziehungsverfueg
 
 /**
  * Reine Routing-Entscheidung nach der Tabelle in klassifikations_schema.md,
- * erweitert um zwei Regeln aus der Prozessanalyse:
+ * erweitert um Regeln aus der Prozessanalyse:
  *  - Wurde der OCR-Text vor dem Chat-Aufruf gekuerzt, koennen Felder im
- *    Pfaendungsblock nicht als "sicher nicht vorhanden" gelten - Zwang zur
- *    Sichtpruefung statt eines stillen Datenverlusts.
+ *    Pfaendungsblock oder Auskunftsersuchen nicht als "sicher nicht
+ *    vorhanden" gelten - Zwang zur Sichtpruefung statt eines stillen
+ *    Datenverlusts.
  *  - Eine niedrige OCR-Zeichenerkennungssicherheit (objektives Signal,
  *    unabhaengig von der Modell-Selbsteinschaetzung) erzwingt ebenfalls
- *    Sichtpruefung.
+ *    Sichtpruefung - genauso wenn gar keine OCR-Konfidenz vorliegt (fail
+ *    closed statt die Pruefung stillschweigend zu ueberspringen).
  *
  * Die Erinnerungsschreiben-Regel ("bezug_aktenzeichen nicht im Bestand
  * auffindbar") braucht einen DB-Abgleich - der Aufrufer (server/index.js)
@@ -301,7 +307,10 @@ export function bestimmeRouting(
   const gruende = [];
   let pfad = "autofall";
 
-  if (klassifikation.konfidenz_typ < SCHWELLE_KONFIDENZ_TYP) {
+  // ?? 0 statt direktem Vergleich: fehlt konfidenz_typ, soll das wie
+  // "keine Konfidenz" wirken (undefined < SCHWELLE waere sonst false und
+  // liesse den Fall unbemerkt durch).
+  if ((klassifikation.konfidenz_typ ?? 0) < SCHWELLE_KONFIDENZ_TYP) {
     pfad = "sichtpruefung";
     gruende.push(`konfidenz_typ (${klassifikation.konfidenz_typ}) unter Schwelle ${SCHWELLE_KONFIDENZ_TYP}`);
   }
@@ -317,18 +326,24 @@ export function bestimmeRouting(
     pfad = "sichtpruefung";
     gruende.push("erinnerungsschreiben: bezug_aktenzeichen nicht im Bestand auffindbar");
   }
-  if (klassifikation.wurde_gekuerzt && PFAENDUNGSBLOCK_TYPEN.includes(klassifikation.dokumenttyp)) {
+  if (
+    klassifikation.wurde_gekuerzt &&
+    (PFAENDUNGSBLOCK_TYPEN.includes(klassifikation.dokumenttyp) || klassifikation.dokumenttyp === "auskunftsersuchen")
+  ) {
     pfad = "sichtpruefung";
     gruende.push("Dokument wurde vor der Klassifikation gekuerzt - fehlende Felder nicht verlaesslich");
   }
-  if (ocrConfidence && ocrConfidence.minimum < SCHWELLE_OCR_KONFIDENZ) {
+  if (!ocrConfidence) {
+    pfad = "sichtpruefung";
+    gruende.push("keine OCR-Konfidenz verfuegbar - Qualitaet des Texts nicht einschaetzbar");
+  } else if (ocrConfidence.minimum < SCHWELLE_OCR_KONFIDENZ) {
     pfad = "sichtpruefung";
     gruende.push(`ocr_confidence.minimum (${ocrConfidence.minimum}) unter Schwelle ${SCHWELLE_OCR_KONFIDENZ}`);
   }
 
   const vierAugenErforderlich =
     PFAENDUNGSBLOCK_TYPEN.includes(klassifikation.dokumenttyp) &&
-    klassifikation.pfaendung?.konfidenz_betrag < SCHWELLE_KONFIDENZ_BETRAG;
+    (klassifikation.pfaendung?.konfidenz_betrag ?? 0) < SCHWELLE_KONFIDENZ_BETRAG;
   if (vierAugenErforderlich) {
     gruende.push(
       `konfidenz_betrag (${klassifikation.pfaendung?.konfidenz_betrag}) unter Schwelle ${SCHWELLE_KONFIDENZ_BETRAG}`

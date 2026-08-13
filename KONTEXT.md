@@ -76,7 +76,29 @@ Aktenzeichen-Abgleich.
 
 ## Nächste sinnvolle Schritte (nicht begonnen)
 - Echten Versand-Kanal an die Platzhalter-Nodes hängen.
-- Konfidenzschwellen mit echten Testläufen kalibrieren.
+- Konfidenzschwellen (70/85/60) mit echten Testläufen kalibrieren (Startwerte weiterhin ungemessen, siehe unten).
+
+## Erledigt: Prozessanalyse-Fixes Routing + n8n-Workflows (2026-08-13)
+Mit dem process-automation-toolkit-Skill analysiert und behoben:
+- `bestimmeRouting()` in `feldmark_app/server/mistral.js` ist jetzt fail-closed:
+  fehlendes `konfidenz_typ` oder `konfidenz_betrag` vom Modell zaehlt als
+  "keine Konfidenz" (`?? 0`) statt durch `undefined < Schwelle` unbemerkt als
+  "Schwelle eingehalten" durchzugehen. Fehlt `ocrConfidence` komplett, wird
+  ebenfalls in Sichtpruefung geroutet statt der Check stillschweigend
+  uebersprungen. `wurde_gekuerzt` erzwingt Sichtpruefung jetzt auch fuer
+  `auskunftsersuchen`, nicht mehr nur fuer den Pfaendungsblock.
+- Beide n8n-Workflows (`Ix9jAYFWgh73fPv9`, `vAHlgWXDJXIS2cps`): Empfaenger-
+  Felder in "Erinnerung 1/2 aufbereiten" und "Eskalation aufbereiten" nutzen
+  jetzt `.filter(Boolean).join(', ')` statt roher String-Interpolation -
+  verhindert literales `"null"` bzw. Leerstring-Kommas bei fehlenden
+  E-Mail-Feldern, relevant sobald ein echter Versand-Node drankommt.
+  Sticky Note mit Feiertage-Pflegehinweis ergaenzt (`FEIERTAGE`-Liste ist
+  hart auf 2026 codiert, ab 2027 unbemerkt keine Feiertagsverschiebung mehr).
+- **Beide Workflows sind jetzt aktiviert** (vorher `active: false` - liefen
+  nur ueber "Manuell testen", der taegliche Schedule-Trigger 07:00/07:15 Uhr
+  griff nicht). Kein Live-Testlauf nach den Fixes ausgefuehrt, um keine
+  zusaetzlichen Protokoll-/Status-Schreibvorgaenge in der echten Supabase-DB
+  auszuloesen - bei Bedarf manuell in n8n ("Manuell testen") pruefen.
 
 ## Erledigt: Baustein in Haupt-App eingepackt (2026-08-13)
 `feldmark_klassifikation/` → `feldmark_app/` umbenannt (git mv, History erhalten).
