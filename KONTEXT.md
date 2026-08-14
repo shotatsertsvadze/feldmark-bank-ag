@@ -1,4 +1,65 @@
-# Feldmark Bank AG — Projektkontext (Stand 2026-08-13)
+# Feldmark Bank AG — Projektkontext (Stand 2026-08-14)
+
+## Neu: Datendiskrepanz-Sweep in n8n verkabelt (2026-08-14)
+Direkter Folgeauftrag zum Eintrag darunter: Nutzer bestätigte "ja" auf die
+Frage, ob der fertige `POST /api/sweep/datendiskrepanz`-Endpunkt in n8n
+verkabelt werden soll.
+
+**Blocker entdeckt, bevor irgendwas gebaut wurde**: `feldmark_app` ist
+nirgends deployed (kein Procfile/vercel.json/render.yaml, nur lokale
+`.env`) — n8n läuft in der Cloud und kann `localhost` nicht erreichen. Der
+bestehende Fristüberwachungs-Sweep funktioniert nur, weil er direkt gegen
+Postgres arbeitet (öffentlich über den Supabase-Pooler erreichbar), nicht
+über die Express-API. Frage dem Nutzer gestellt statt einfach zu
+duplizieren oder einfach zu deployen — beides sind Entscheidungen, die ihm
+gehören. **Antwort: Sweep-Logik nach n8n duplizieren** (Postgres+Code-Node,
+gleiches Muster wie der bestehende Sweep), Deployment bewusst nicht
+gewählt.
+
+**Umgesetzt**: neuer paralleler Zweig im bestehenden Workflow
+`Ix9jAYFWgh73fPv9` ("Nickel — Pfaendung: Fristueberwachung (Postgres)"),
+ab denselben zwei Triggern (`Taeglich 07:00 Uhr`, `Manuell testen`):
+Postgres-Query lädt offene Datendiskrepanz-Fälle → Code-Node
+("Datendiskrepanz-Aktion bestimmen", dupliziert bewusst
+`feldmark_app/server/datendiskrepanz.js` — MUSS bei Änderungen dort
+manuell nachgezogen werden, siehe Sticky Note im Workflow) → Switch mit
+5 Ausgängen → Postgres-UPDATE-Ketten je Aktion (Nachfassung 1/2,
+fristwahrende Erklärung, 30-Tage-Schließung, keine).
+
+**Zwei echte Bugs beim Live-Testen gefunden + gefixt** (nicht kosmetisch,
+beide über `execute_workflow`, nicht `test_workflow`, da letzteres
+Postgres-Nodes pinnt und die echte SQL-Ausführung gar nicht geprüft
+hätte):
+1. Postgres-Node mit `queryBatching: independently` gibt nach dem UPDATE
+   `{success:true}` zurück, NICHT die `RETURNING`-Spalten — `$json.fall_id`
+   war in der zweiten Node einer Kette leer. Fix: wie im bestehenden
+   Workflow per Namen auf den Ursprungs-Node zurückreferenzieren
+   (`$('Datendiskrepanz-Aktion bestimmen').item.json.fall_id`) statt auf
+   `$json` zu vertrauen.
+2. Die mehrzeilige fristwahrende Erklärung als zweiter Parameter neben
+   `fall_id` per komma-getrenntem `queryReplacement`-String übergeben ließ
+   das UPDATE `{success:true}` melden, aber **0 Zeilen aktualisieren** —
+   `erklaerung_text` blieb `NULL`, obwohl kein Fehler auftrat. Die
+   Fehlermeldung des ersten Fixversuchs nannte selbst die Lösung: n8n
+   akzeptiert für `queryReplacement` auch ein Array
+   (`={{ [$json.text, $json.fall_id] }}`) statt eines komma-getrennten
+   Strings — robuster gegenüber Kommas/Zeilenumbrüchen in Textwerten.
+   Auf alle neuen Nodes umgestellt.
+
+**Getestet**: alle vier Zweige (Nachfassung 1, Nachfassung 2, fristwahrende
+Erklärung inkl. korrekt geschriebenem `erklaerung_text`, 30-Tage-
+Schließung) einzeln über echte `execute_workflow`-Läufe gegen einen realen
+Testfall, mit künstlich zurückdatierten Zeitständen (gleiche Technik wie
+beim Node-Backend-Test). Idempotenz bestätigt (fünfter Lauf: Fall bereits
+geschlossen, verschwindet korrekt aus der Query, landet auf "Kein
+Handlungsbedarf"). Workflow anschließend **published** (Draft-Änderungen
+wirken erst nach Publish auf den produktiven Schedule-Trigger). Testfall
+danach vollständig aus allen vier Tabellen gelöscht.
+
+**Offen**: die Duplizierung (Punkt oben) ist eine bewusste, dokumentierte
+Abweichung vom Prinzip "eine Quelle der Wahrheit" — sauberer wäre ein
+HTTP-Request-Node auf den Sweep-Endpunkt, sobald `feldmark_app` deployed
+ist. Kein Code im Repo geändert (der Workflow lebt nur in n8n).
 
 Portfolio-/Abschlussprojekt Digitalisierungsmanager-Bootcamp. Fiktive Bank
 klassifiziert eingehende Schreiben (Pfändung, Auskunftsersuchen etc.) und
