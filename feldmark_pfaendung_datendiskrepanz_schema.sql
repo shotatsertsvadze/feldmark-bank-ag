@@ -15,15 +15,17 @@
 --  beiden Angaben keine sinnvolle Rueckfrage an den Glaeubiger moeglich
 --  ist (Rueckfrage braucht "unser Aktenzeichen, sein Aktenzeichen").
 --
---  Additive 1:1-Erweiterung zu feldmark_pfaendung_faelle, gleiches Muster
---  wie feldmark_pfaendung_erweiterung (P-Konto/Drittschuldnererklaerung) -
+--  Additive 1:1-Erweiterung zu feldmark.pfaendung_faelle, gleiches Muster
+--  wie feldmark.pfaendung_erweiterung (P-Konto/Drittschuldnererklaerung) -
 --  die Faelle-Tabelle selbst bleibt bis auf die bereits erweiterte
 --  status-CHECK-Constraint unangetastet.
 -- =====================================================================
 
-CREATE TABLE IF NOT EXISTS feldmark_pfaendung_datendiskrepanz (
+CREATE SCHEMA IF NOT EXISTS feldmark;
+
+CREATE TABLE IF NOT EXISTS feldmark.pfaendung_datendiskrepanz (
     fall_id                        text        PRIMARY KEY
-                                    REFERENCES feldmark_pfaendung_faelle (fall_id),
+                                    REFERENCES feldmark.pfaendung_faelle (fall_id),
 
     -- A1: sofortige strukturierte Rueckfrage an den Glaeubiger. Der
     -- eigentliche Versand ist Platzhalter (kein E-Mail-Kanal angebunden,
@@ -44,7 +46,7 @@ CREATE TABLE IF NOT EXISTS feldmark_pfaendung_datendiskrepanz (
     -- P-Konto-Baustein bewusst nicht implementierte Erklaerungsvariante
     -- (siehe Docstring-Kommentar in server/pkonto_drittschuldner.js), hier
     -- jetzt erreichbar. Der Text selbst landet NICHT hier, sondern wird
-    -- ueber db.speichereErklaerung() in feldmark_pfaendung_erweiterung
+    -- ueber db.speichereErklaerung() in feldmark.pfaendung_erweiterung
     -- geschrieben - Wiederverwendung der bereits gebauten und getesteten
     -- Freigabe-/Versand-Pipeline statt einer zweiten, parallelen. Diese
     -- Spalte ist nur der Ausloese-Zeitstempel (Idempotenz: nicht zweimal
@@ -63,13 +65,13 @@ CREATE TABLE IF NOT EXISTS feldmark_pfaendung_datendiskrepanz (
     geschlossen_grund              text
 );
 
-COMMENT ON TABLE feldmark_pfaendung_datendiskrepanz IS
-    '1:1-Erweiterung zu feldmark_pfaendung_faelle fuer den Datendiskrepanz-
+COMMENT ON TABLE feldmark.pfaendung_datendiskrepanz IS
+    '1:1-Erweiterung zu feldmark.pfaendung_faelle fuer den Datendiskrepanz-
      Workflow (Sollkonzept 3.1, Ast A). Ein Fall mit einer offenen Zeile
      hier (geklaert_am UND geschlossen_am beide NULL) hat einen Platzhalter
-     als schuldner in feldmark_pfaendung_faelle stehen und laeuft parallel
+     als schuldner in feldmark.pfaendung_faelle stehen und laeuft parallel
      zur normalen Fristueberwachung, statt sie zu blockieren.';
 
-COMMENT ON COLUMN feldmark_pfaendung_datendiskrepanz.nachfassung_1_gesendet_am IS
+COMMENT ON COLUMN feldmark.pfaendung_datendiskrepanz.nachfassung_1_gesendet_am IS
     'Faellig 3 Tage nach rueckfrage_gesendet_am - Zeitanker ist die
      Rueckfrage, nicht das Zustelldatum des Ursprungsschreibens.';

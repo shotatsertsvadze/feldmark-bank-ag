@@ -31,6 +31,18 @@ async function json(antwort) {
   return daten;
 }
 
+export async function aktivitaetLaden(limit = 20) {
+  return (await json(await fetch(`/api/aktivitaet?limit=${limit}`))).eintraege;
+}
+
+export async function sweepStatusLaden() {
+  return (await json(await fetch("/api/sweep-status"))).sweeps;
+}
+
+export async function protokollLaden(fallId) {
+  return (await json(await fetch(`/api/faelle/${fallId}/protokoll`))).eintraege;
+}
+
 export async function erweiterungLaden(fallId) {
   return (await json(await fetch(`/api/faelle/${fallId}/erweiterung`))).fall;
 }

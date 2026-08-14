@@ -56,11 +56,11 @@ export function berechneRang(fallId, alleOffenenFaelleDesSchuldners) {
  * Ergaenzungskonzept beschriebene Variante (fristwahrende Negativerklaerung
  * bei nicht zuordenbarem Schuldner) ist hier nicht implementiert, weil
  * solche Faelle im aktuellen Routing gar nicht in
- * feldmark_pfaendung_faelle landen, sondern in der Sichtpruefung - es gibt
+ * feldmark.pfaendung_faelle landen, sondern in der Sichtpruefung - es gibt
  * also aktuell keinen erreichbaren Zustand, der sie ausloesen wuerde.
  *
- * @param {object} fall - Zeile aus feldmark_pfaendung_faelle.
- * @param {object} erweiterung - Zeile aus feldmark_pfaendung_erweiterung.
+ * @param {object} fall - Zeile aus feldmark.pfaendung_faelle.
+ * @param {object} erweiterung - Zeile aus feldmark.pfaendung_erweiterung.
  * @param {{fall_id:string, glaeubiger:string, zustelldatum:string}[]} andereOffenePfaendungen
  *   Andere offene Pfaendungen desselben Schuldners, OHNE den Fall selbst.
  * @returns {{ok:true, text:string} | {ok:false, grund:string}}

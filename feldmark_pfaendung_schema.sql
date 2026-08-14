@@ -7,13 +7,17 @@
 --  Getestet gegen PostgreSQL 15/16.
 -- =====================================================================
 
+CREATE SCHEMA IF NOT EXISTS feldmark;
+
 -- ---------------------------------------------------------------------
 -- 1) Fallakte — der Bestand, ueber den der taegliche Sweep laeuft
 -- ---------------------------------------------------------------------
-DROP TABLE IF EXISTS feldmark_pfaendung_protokoll;
-DROP TABLE IF EXISTS feldmark_pfaendung_faelle;
+DROP TABLE IF EXISTS feldmark.pfaendung_protokoll;
+DROP TABLE IF EXISTS feldmark.pfaendung_faelle;
 
-CREATE TABLE feldmark_pfaendung_faelle (
+CREATE SEQUENCE IF NOT EXISTS feldmark.pfaendung_fall_seq;
+
+CREATE TABLE feldmark.pfaendung_faelle (
     fall_id               text PRIMARY KEY,
     aktenzeichen          text        NOT NULL,
     glaeubiger            text        NOT NULL,
@@ -45,16 +49,16 @@ CREATE TABLE feldmark_pfaendung_faelle (
     letzte_aktion_am      timestamptz
 );
 
-COMMENT ON COLUMN feldmark_pfaendung_faelle.zustelldatum IS
+COMMENT ON COLUMN feldmark.pfaendung_faelle.zustelldatum IS
     'Fristbeginn nach § 840 ZPO. Papier = Eingangsstempel, eBO = Zustellzeitpunkt.
      Verbindliche Festlegung steht noch aus (offener Punkt fuer Legal).';
 
 -- ---------------------------------------------------------------------
 -- 2) Protokoll — Nachweis je Ereignis, zugleich die KPI-Basis
 -- ---------------------------------------------------------------------
-CREATE TABLE feldmark_pfaendung_protokoll (
+CREATE TABLE feldmark.pfaendung_protokoll (
     id         bigserial PRIMARY KEY,
-    fall_id    text        NOT NULL REFERENCES feldmark_pfaendung_faelle (fall_id),
+    fall_id    text        NOT NULL REFERENCES feldmark.pfaendung_faelle (fall_id),
     ereignis   text        NOT NULL,
     fristende  date        NOT NULL,
     rest_tage  integer     NOT NULL,
@@ -63,15 +67,15 @@ CREATE TABLE feldmark_pfaendung_protokoll (
     erzeugt_am timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_protokoll_fall ON feldmark_pfaendung_protokoll (fall_id, erzeugt_am DESC);
-CREATE INDEX idx_protokoll_ereignis ON feldmark_pfaendung_protokoll (ereignis, erzeugt_am DESC);
+CREATE INDEX idx_protokoll_fall ON feldmark.pfaendung_protokoll (fall_id, erzeugt_am DESC);
+CREATE INDEX idx_protokoll_ereignis ON feldmark.pfaendung_protokoll (ereignis, erzeugt_am DESC);
 
 -- ---------------------------------------------------------------------
 -- 3) Testdaten — je ein Vertreter pro Entscheidungspfad
 --    Die Zustelldaten sind relativ zu CURRENT_DATE gesetzt, damit alle
 --    Zweige feuern, egal wann du das Skript ausfuehrst.
 -- ---------------------------------------------------------------------
-INSERT INTO feldmark_pfaendung_faelle
+INSERT INTO feldmark.pfaendung_faelle
     (fall_id, aktenzeichen, glaeubiger, schuldner, zustelldatum, zustellkanal,
      status, erinnerungen_gesendet, bearbeiter_email, vertretung_email, vorgesetzte_email)
 VALUES
@@ -111,25 +115,25 @@ VALUES
 
 -- Was der Workflow sieht:
 --   SELECT fall_id, zustelldatum, status, erinnerungen_gesendet
---   FROM   feldmark_pfaendung_faelle
+--   FROM   feldmark.pfaendung_faelle
 --   WHERE  status NOT IN ('Erklaerung versandt','Abgeschlossen',
 --                         'Abgeschlossen mit Fristversaeumnis')
 --   ORDER  BY zustelldatum;
 
 -- Was der Workflow geschrieben hat:
---   SELECT * FROM feldmark_pfaendung_protokoll ORDER BY erzeugt_am DESC;
+--   SELECT * FROM feldmark.pfaendung_protokoll ORDER BY erzeugt_am DESC;
 
 -- KPI: Fristeinhaltungsquote ueber alle abgeschlossenen Faelle
 --   SELECT round(100.0 * count(*) FILTER (
 --            WHERE status <> 'Abgeschlossen mit Fristversaeumnis')
 --          / nullif(count(*), 0), 1) AS fristeinhaltung_prozent
---   FROM   feldmark_pfaendung_faelle
+--   FROM   feldmark.pfaendung_faelle
 --   WHERE  status IN ('Erklaerung versandt','Abgeschlossen',
 --                     'Abgeschlossen mit Fristversaeumnis');
 
 -- Zuruecksetzen fuer einen erneuten Testlauf:
---   TRUNCATE feldmark_pfaendung_protokoll;
---   UPDATE feldmark_pfaendung_faelle
+--   TRUNCATE feldmark.pfaendung_protokoll;
+--   UPDATE feldmark.pfaendung_faelle
 --   SET    erinnerungen_gesendet = CASE fall_id
 --            WHEN 'PF-2026-0481' THEN '{}'::text[]
 --            WHEN 'PF-2026-0463' THEN '{erinnerung_1}'::text[]

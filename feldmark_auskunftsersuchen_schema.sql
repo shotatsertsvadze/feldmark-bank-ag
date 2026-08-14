@@ -2,23 +2,27 @@
 --  Feldmark Bank AG — Auskunftsersuchen (StA/Ermittlungsbehoerden)
 --  Schema + Testdaten
 --
---  Eigene Tabelle statt Erweiterung von feldmark_pfaendung_faelle:
+--  Eigene Tabelle statt Erweiterung von feldmark.pfaendung_faelle:
 --  Auskunftsersuchen hat andere Kernfelder (Ermittlungsbehoerde + betroffene
 --  Person statt Glaeubiger/Schuldner) und eine andere Fristlogik (14 Tage
 --  nach § 161 StPO im Muster, nicht die ZPO-Fristen der Pfaendung).
---  feldmark_pfaendung_faelle und der bereits getestete n8n-Workflow dafuer
+--  feldmark.pfaendung_faelle und der bereits getestete n8n-Workflow dafuer
 --  bleiben unveraendert.
 --
 --  Einmalig ausfuehren. Getestet gegen PostgreSQL 15/16.
 -- =====================================================================
 
+CREATE SCHEMA IF NOT EXISTS feldmark;
+
 -- ---------------------------------------------------------------------
 -- 1) Fallakte
 -- ---------------------------------------------------------------------
-DROP TABLE IF EXISTS feldmark_auskunftsersuchen_protokoll;
-DROP TABLE IF EXISTS feldmark_auskunftsersuchen_faelle;
+DROP TABLE IF EXISTS feldmark.auskunftsersuchen_protokoll;
+DROP TABLE IF EXISTS feldmark.auskunftsersuchen_faelle;
 
-CREATE TABLE feldmark_auskunftsersuchen_faelle (
+CREATE SEQUENCE IF NOT EXISTS feldmark.auskunftsersuchen_fall_seq;
+
+CREATE TABLE feldmark.auskunftsersuchen_faelle (
     fall_id                       text PRIMARY KEY,
     aktenzeichen                  text        NOT NULL,
     ausstellende_behoerde         text        NOT NULL,
@@ -38,7 +42,7 @@ CREATE TABLE feldmark_auskunftsersuchen_faelle (
                                                     'Antwort versandt',
                                                     'Abgeschlossen',
                                                     'Abgeschlossen mit Fristversaeumnis')),
-    -- Idempotenz, wie bei feldmark_pfaendung_faelle.
+    -- Idempotenz, wie bei feldmark.pfaendung_faelle.
     erinnerungen_gesendet         text[]      NOT NULL DEFAULT '{}',
     bearbeiter_email              text        NOT NULL,
     vertretung_email              text,
@@ -47,27 +51,27 @@ CREATE TABLE feldmark_auskunftsersuchen_faelle (
     letzte_aktion_am              timestamptz
 );
 
-COMMENT ON COLUMN feldmark_auskunftsersuchen_faelle.eingangsdatum IS
+COMMENT ON COLUMN feldmark.auskunftsersuchen_faelle.eingangsdatum IS
     'Fristbeginn. Kommt ausschliesslich aus dem E-Mail-Header bzw. dem
      Scan-Eingangsstempel, nie aus dem Dokumenttext oder vom Modell erfunden -
-     gleiches Prinzip wie zustelldatum in feldmark_pfaendung_faelle.';
+     gleiches Prinzip wie zustelldatum in feldmark.pfaendung_faelle.';
 
-COMMENT ON COLUMN feldmark_auskunftsersuchen_faelle.antwortfrist_tage IS
+COMMENT ON COLUMN feldmark.auskunftsersuchen_faelle.antwortfrist_tage IS
     'Aus dem Dokument extrahiert (Feld auskunftsersuchen.antwortfrist_tage im
      Klassifikationsschema). Fehlt dieser Wert, sollte der Fall NICHT
      automatisch angelegt werden, sondern in die Sichtpruefung gehen - ohne
      Frist keine Fristueberwachung moeglich.';
 
 -- ---------------------------------------------------------------------
--- 2) Protokoll — gleiches Muster wie feldmark_pfaendung_protokoll.
+-- 2) Protokoll — gleiches Muster wie feldmark.pfaendung_protokoll.
 --    Traegt auch die Vier-Augen-Pflicht (konfidenz_betrag entfaellt hier,
 --    aber z.B. niedrige Extraktionsguete kann als eigenes Ereignis
 --    vermerkt werden), damit keine der beiden Faelle-Tabellen fuer sowas
 --    eigene Spalten braucht.
 -- ---------------------------------------------------------------------
-CREATE TABLE feldmark_auskunftsersuchen_protokoll (
+CREATE TABLE feldmark.auskunftsersuchen_protokoll (
     id         bigserial PRIMARY KEY,
-    fall_id    text        NOT NULL REFERENCES feldmark_auskunftsersuchen_faelle (fall_id),
+    fall_id    text        NOT NULL REFERENCES feldmark.auskunftsersuchen_faelle (fall_id),
     ereignis   text        NOT NULL,
     fristende  date        NOT NULL,
     rest_tage  integer     NOT NULL,
@@ -76,8 +80,8 @@ CREATE TABLE feldmark_auskunftsersuchen_protokoll (
     erzeugt_am timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_ae_protokoll_fall ON feldmark_auskunftsersuchen_protokoll (fall_id, erzeugt_am DESC);
-CREATE INDEX idx_ae_protokoll_ereignis ON feldmark_auskunftsersuchen_protokoll (ereignis, erzeugt_am DESC);
+CREATE INDEX idx_ae_protokoll_fall ON feldmark.auskunftsersuchen_protokoll (fall_id, erzeugt_am DESC);
+CREATE INDEX idx_ae_protokoll_ereignis ON feldmark.auskunftsersuchen_protokoll (ereignis, erzeugt_am DESC);
 
 -- ---------------------------------------------------------------------
 -- 3) Testdaten — je ein Vertreter pro Entscheidungspfad, analog zu
@@ -85,7 +89,7 @@ CREATE INDEX idx_ae_protokoll_ereignis ON feldmark_auskunftsersuchen_protokoll (
 --    Auskunftsersuchen_StA_fiktiv.html. Eingangsdaten relativ zu
 --    CURRENT_DATE, damit alle Zweige unabhaengig vom Ausfuehrungsdatum feuern.
 -- ---------------------------------------------------------------------
-INSERT INTO feldmark_auskunftsersuchen_faelle
+INSERT INTO feldmark.auskunftsersuchen_faelle
     (fall_id, aktenzeichen, ausstellende_behoerde, betroffene_person_name,
      betroffene_person_geburtsdatum, tatvorwurf, angefragte_punkte, vertraulich,
      eingangsdatum, antwortfrist_tage, zustellkanal, status, erinnerungen_gesendet,
@@ -133,14 +137,14 @@ VALUES
 
 -- Was ein kuenftiger Fristüberwachungs-Workflow sehen würde:
 --   SELECT fall_id, eingangsdatum, antwortfrist_tage, status, erinnerungen_gesendet
---   FROM   feldmark_auskunftsersuchen_faelle
+--   FROM   feldmark.auskunftsersuchen_faelle
 --   WHERE  status NOT IN ('Antwort versandt','Abgeschlossen',
 --                         'Abgeschlossen mit Fristversaeumnis')
 --   ORDER  BY eingangsdatum;
 
 -- Zuruecksetzen fuer einen erneuten Testlauf:
---   TRUNCATE feldmark_auskunftsersuchen_protokoll;
---   UPDATE feldmark_auskunftsersuchen_faelle
+--   TRUNCATE feldmark.auskunftsersuchen_protokoll;
+--   UPDATE feldmark.auskunftsersuchen_faelle
 --   SET    erinnerungen_gesendet = CASE fall_id
 --            WHEN 'AE-2026-0118' THEN '{}'::text[]
 --            WHEN 'AE-2026-0107' THEN '{erinnerung_1}'::text[]

@@ -6,6 +6,9 @@ import Fristleiste from "./Fristleiste.jsx";
 import Stempel from "./Stempel.jsx";
 import PfaendungErweiterung from "./PfaendungErweiterung.jsx";
 import DatendiskrepanzFall from "./DatendiskrepanzFall.jsx";
+import Fallverlauf from "./Fallverlauf.jsx";
+import Aktivitaetsfeed from "./Aktivitaetsfeed.jsx";
+import SweepStatus from "./SweepStatus.jsx";
 
 const FILTER = [
   { id: "alle", label: "Alle" },
@@ -82,19 +85,21 @@ export default function Falluebersicht({ reloadSignal }) {
         </div>
       </div>
 
-      <div className="filter-tabs">
-        {FILTER.map((f) => (
-          <button
-            key={f.id}
-            className={`filter-tabs__btn${filter === f.id ? " filter-tabs__btn--aktiv" : ""}`}
-            onClick={() => setFilter(f.id)}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
+      <div className="fallansicht">
+        <div className="fallansicht__haupt">
+          <div className="filter-tabs">
+            {FILTER.map((f) => (
+              <button
+                key={f.id}
+                className={`filter-tabs__btn${filter === f.id ? " filter-tabs__btn--aktiv" : ""}`}
+                onClick={() => setFilter(f.id)}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
 
-      <div className="panel">
+          <div className="panel">
         <div className="panel__head">
           <p className="panel__head-title">Fristüberwachung</p>
         </div>
@@ -111,8 +116,8 @@ export default function Falluebersicht({ reloadSignal }) {
               return (
                 <div key={f.fall_id}>
                   <div
-                    className={`fall-zeile${istPfaendungsblock ? " fall-zeile--klickbar" : ""}`}
-                    onClick={istPfaendungsblock ? () => setAufgeklapptFallId(istAufgeklappt ? null : f.fall_id) : undefined}
+                    className="fall-zeile fall-zeile--klickbar"
+                    onClick={() => setAufgeklapptFallId(istAufgeklappt ? null : f.fall_id)}
                   >
                     <span className="fall-zeile__id">{f.fall_id}</span>
                     <div className="fall-zeile__parteien">
@@ -120,8 +125,8 @@ export default function Falluebersicht({ reloadSignal }) {
                       <div className="fall-zeile__namen">
                         {f.partei_a} → {f.partei_b}
                       </div>
+                      <div className="fall-zeile__status">{f.status}</div>
                     </div>
-                    <span className="fall-zeile__status">{f.status}</span>
                     <Fristleiste
                       eingangsdatum={f.eingangsdatum}
                       antwortfristTage={f.antwortfrist_tage}
@@ -130,8 +135,13 @@ export default function Falluebersicht({ reloadSignal }) {
                   </div>
                   {istAufgeklappt && (
                     <div className="fall-zeile__erweiterung">
-                      <DatendiskrepanzFall fallId={f.fall_id} onFallGeaendert={() => setInternerReload((n) => n + 1)} />
-                      <PfaendungErweiterung fallId={f.fall_id} onFallGeaendert={() => setInternerReload((n) => n + 1)} />
+                      {istPfaendungsblock && (
+                        <>
+                          <DatendiskrepanzFall fallId={f.fall_id} onFallGeaendert={() => setInternerReload((n) => n + 1)} />
+                          <PfaendungErweiterung fallId={f.fall_id} onFallGeaendert={() => setInternerReload((n) => n + 1)} />
+                        </>
+                      )}
+                      <Fallverlauf fallId={f.fall_id} />
                     </div>
                   )}
                 </div>
@@ -139,41 +149,48 @@ export default function Falluebersicht({ reloadSignal }) {
             })}
           </div>
         )}
-      </div>
+          </div>
 
-      <div className="panel">
-        <div className="panel__head">
-          <p className="panel__head-title">Sichtprüfungs-Warteschlange</p>
-        </div>
-        {sichtpruefung.length === 0 ? (
-          <div className="leer">
-            <strong>Warteschlange leer</strong>
-            Alles Aufgelaufene wurde geprüft oder automatisch verarbeitet.
-          </div>
-        ) : (
-          <div>
-            {sichtpruefung.map((s) => (
-              <div className="sichtpruefung-zeile" key={s.id}>
-                <div className="sichtpruefung-zeile__stempel">
-                  <Stempel typLabel={DOKUMENTTYP_LABEL[s.dokumenttyp] || s.dokumenttyp} wert="Prüfen" farbe="ochre" />
-                </div>
-                <div className="sichtpruefung-zeile__info">
-                  <span className="sichtpruefung-zeile__datei">{s.dateiname}</span>
-                  <p className="sichtpruefung-zeile__begruendung">
-                    {s.plausibilitaet_begruendung || "Konfidenz unterhalb der Autofall-Schwelle."}
-                  </p>
-                  <div className="sichtpruefung-zeile__gruende">
-                    {s.routing_gruende.map((g, i) => (
-                      <span className="badge badge--ochre" key={i}>
-                        {g}
-                      </span>
-                    ))}
-                  </div>
-                </div>
+          <div className="panel">
+            <div className="panel__head">
+              <p className="panel__head-title">Sichtprüfungs-Warteschlange</p>
+            </div>
+            {sichtpruefung.length === 0 ? (
+              <div className="leer">
+                <strong>Warteschlange leer</strong>
+                Alles Aufgelaufene wurde geprüft oder automatisch verarbeitet.
               </div>
-            ))}
+            ) : (
+              <div>
+                {sichtpruefung.map((s) => (
+                  <div className="sichtpruefung-zeile" key={s.id}>
+                    <div className="sichtpruefung-zeile__stempel">
+                      <Stempel typLabel={DOKUMENTTYP_LABEL[s.dokumenttyp] || s.dokumenttyp} wert="Prüfen" farbe="ochre" />
+                    </div>
+                    <div className="sichtpruefung-zeile__info">
+                      <span className="sichtpruefung-zeile__datei">{s.dateiname}</span>
+                      <p className="sichtpruefung-zeile__begruendung">
+                        {s.plausibilitaet_begruendung || "Konfidenz unterhalb der Autofall-Schwelle."}
+                      </p>
+                      <div className="sichtpruefung-zeile__gruende">
+                        {s.routing_gruende.map((g, i) => (
+                          <span className="badge badge--ochre" key={i}>
+                            {g}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </div>
+
+        <div className="fallansicht__seite">
+          <SweepStatus />
+          <Aktivitaetsfeed />
+        </div>
       </div>
     </section>
   );

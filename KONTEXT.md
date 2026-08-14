@@ -1,5 +1,127 @@
 # Feldmark Bank AG — Projektkontext (Stand 2026-08-14)
 
+## Neu: Debugging, Supabase-Reorganisation, Redesign, Prozess-Sichtbarkeit (2026-08-14, Fortsetzung)
+Direkte Fortsetzung derselben Session wie der Eintrag darunter (Datendiskrepanz-
+Sweep-Verkabelung). Nutzer kam mit "ich habe grade getestet, failed to fetch"
+zurück und die Session entwickelte sich von dort in mehrere Richtungen. Größter
+Umfang der Session bisher — nichts davon ist committed, siehe Abschnitt ganz
+unten.
+
+### Debugging (kein Code-Bug, zwei echte Umgebungsprobleme)
+- **"failed to fetch"**: Dev-Server lief schlicht nicht mehr. Dabei zusätzlich
+  entdeckt: mein Terminal-Zugriff auf `~/Desktop/...` war komplett weg
+  (macOS-Berechtigung "Volluzugriff auf Festplatte" für die Claude-App
+  verloren) — durch Neustart der Claude-App behoben, nicht code-seitig.
+- **Server neu gestartet, Upload getestet**: beide Pipelines (Pfändung +
+  Auskunftsersuchen) end-to-end über die echte Browser-UI bestätigt.
+- **Vom Nutzer gemeldeter HTTP 500**: beim Nachschauen in den Netzwerk-Logs
+  gefunden, dass `GET /api/faelle` und `GET /api/sichtpruefung` kurz nach
+  einem Upload viermal mit 500 fehlschlugen — die genaue Fehlermeldung war
+  nicht mehr abrufbar (Puffer bereits verworfen), aber dabei eine echte
+  strukturelle Lücke gefunden: **der Server loggt Fehler nirgends**, nur in
+  der HTTP-Antwort selbst. `console.error` in allen zehn `catch`-Blöcken in
+  `server/index.js` sowie in `verarbeiteDatei()` ergänzt — künftige 500er
+  sind jetzt im Terminal sichtbar, statt spurlos zu bleiben.
+- **"Forderungshoehe fehlt" beim Erzeugen der Drittschuldnererklärung**:
+  kein Bug, sondern korrektes fail-closed-Verhalten — alle bestehenden
+  Seed-Fälle wurden angelegt, bevor `legePfaendungsfallAn()` gelernt hat,
+  `forderung_gesamt_eur` zu speichern, und das Formularfeld ist bewusst
+  read-only. Zur Verifikation ein fiktives, sauber gerendertes PfÜB-PDF
+  gebaut (HTML → Headless-Chrome-PDF) und durch die volle Pipeline
+  geschickt: Autofall korrekt mit Forderungshöhe angelegt, Guthaben erfasst,
+  Drittschuldnererklärung erfolgreich erzeugt. Testfall danach komplett
+  entfernt.
+
+### Drittschuldnererklärung als Modal statt Inline-Block
+Auf Nutzerwunsch ("wie es aussieht… dass ein Fenster rauskommt"): die
+erzeugte Erklärung erscheint jetzt in einem echten Popup (öffnet automatisch
+beim Erzeugen, Schließen per ×/Klick-außerhalb/Escape, über einen
+"Erklärung anzeigen"-Button jederzeit erneut aufrufbar). Freigabe,
+Vier-Augen-Warnung und Versand-Bestätigung laufen unverändert innerhalb des
+Modals — live inklusive Vier-Augen-Override getestet.
+
+### Supabase-Reorganisation: eigenes Schema statt `public`
+Nutzer fand `public` unübersichtlich — dort lagen die 7 `feldmark_*`-Tabellen
+gemischt mit Tabellen aus zwei fremden Kurs-Projekten (Reifegrad-Checker,
+ein Beschaffungs-Beispiel), die dasselbe Supabase-Projekt mitnutzen. Alle 7
+Tabellen + 4 Sequenzen (inkl. zwei eigenständiger `..._fall_seq`, die vorher
+in keiner Schema-Datei dokumentiert waren) per `ALTER ... SET SCHEMA` +
+`RENAME` ins neue Schema **`feldmark`** verschoben, Tabellennamen dabei um
+das redundante `feldmark_`-Präfix gekürzt (`feldmark.pfaendung_faelle` statt
+`public.feldmark_pfaendung_faelle`). Betraf `server/db.js` (58 Fundstellen),
+zwei Literal-Strings in `server/index.js`, drei Kommentare in
+`pkonto_drittschuldner.js`, alle 5 lokalen `.sql`-Schema-Dateien (inkl.
+Nachtrag der bisher fehlenden Sequenz-Definitionen) und **alle
+Postgres-Nodes in beiden täglichen n8n-Sweep-Workflows** (11 Nodes im
+Pfändungs-, 3 im Auskunftsersuchen-Workflow) — beide Workflows danach
+published. Verifiziert: frischer Upload → Autofall über die neue Sequenz →
+bestehenden Fall über die UI geöffnet (JOIN-Pfad) → beide n8n-Workflows live
+ausgeführt, liefern reale Daten aus dem neuen Schema zurück.
+
+### Redesign ("intuitiver, freundlicher, präsentabler", `/frontend-design`)
+Bestehende Signaturelemente verstärkt statt neu erfunden — Stempel- und
+Fristleiste-Motiv waren im Code selbst schon als "Signaturelement"
+dokumentiert, nur blass umgesetzt:
+- Neues Farbsystem: tiefes institutionelles Marineblau (`--brand`, trägt
+  Sidebar/Primäraktionen) + Messing/Bronze als sparsamer Siegel-Akzent
+  (`--brass`) statt des generischen KI-Terracotta; Statusfarben vertieft für
+  mehr Kontrast; Radius 3px → 8/12px.
+- Dunkle Marine-Sidebar mit handgezeichnetem SVG-Siegel (Grenzstein-Motiv,
+  aus "Feldmark" abgeleitet) statt flacher weißer Fläche.
+- Stempel: kräftigere Ringe, Tinten-Textur per layered radial-gradient.
+- Fristleiste: größer, Fallzeile bekommt zusätzlich einen farbigen
+  Rand-Akzent bei kritischen/fälligen Fristen (`:has()`-Selektor,
+  progressive enhancement) — auf einen Blick scanbar.
+- Solide Primärbuttons statt reinem Outline-Look, größere Typo-Skala,
+  echte Panel-Tiefe. Desktop + Mobile, alle Screens, Fokuszustände geprüft.
+
+### Prozesse hinter den Kulissen sichtbar machen
+Erst gebrainstormt (4 Optionen), dann alle vier umgesetzt:
+1. **Fall-Verlauf**: Timeline pro Fall aus den längst bestehenden, aber nie
+   angezeigten Protokoll-Tabellen (`feldmark.pfaendung_protokoll` /
+   `-auskunftsersuchen_protokoll`) — reine Audit-Daten-Leiche endlich
+   sichtbar gemacht. Nebeneffekt: Auskunftsersuchen-Fallzeilen sind jetzt
+   ebenfalls aufklappbar (vorher nur Pfändungsblock — kein fachlicher Grund
+   dagegen gefunden, nur fehlte bisher der Inhalt dafür).
+2. **Aktivitäts-Feed**: fallübergreifende Zeitleiste (UNION ALL über beide
+   Protokoll-Tabellen + JOIN für Kontext), Ereignis-Labels/Farben aus
+   `dokumenttypen.js` zentralisiert, von Fall-Verlauf und Feed gemeinsam
+   genutzt.
+3. **Layout-Fix**: Nutzer bemängelte, der Aktivitäts-Feed sei "ganz unten
+   versteckt" — Fallübersicht auf Haupt-/sticky-Seitenspalte umgebaut
+   (rechts: Sweep-Status + kompakter Feed, bleibt beim Scrollen sichtbar).
+   Dabei echte Regression gefunden+behoben: die schmalere Hauptspalte schnitt
+   Parteinamen zu stark ab — Status aus der eigenen Grid-Spalte in eine
+   zweite Zeile unter dem Namen verschoben (4-spaltig → 3-spaltig).
+4. **n8n-Sweep-Status**: neue Tabelle `feldmark.sweep_status`, die **n8n
+   selbst schreibt** (nicht die App über die n8n-API — kein neues API-Token
+   nötig, gleiches "n8n schreibt, App liest"-Prinzip wie überall sonst im
+   Projekt). Beide Sweeps schreiben optimistisch "erfolgreich" direkt beim
+   Start (parallel zum bestehenden Trigger-Fan-out, kein Umbau der
+   vielverzweigten bestehenden Workflows nötig); der gemeinsame
+   Fehler-Alert-Workflow überschreibt auf "fehler" samt Fehlermeldung, falls
+   ein Lauf danach wirklich abbricht (Sweep-Name aus `workflow.name`
+   abgeleitet). Beide Erfolgs-Pfade live getestet; der Fehler-Pfad ließ sich
+   nicht manuell auslösen (Error-Trigger-Workflows sind nicht direkt
+   ausführbar) — nur durch Konstruktion verifiziert (gleiche bereits
+   bewiesene UPSERT-SQL, gleicher bereits im selben Workflow verwendeter
+   `$json.workflow?.name`-Ausdruck).
+5. **Prozess-Diagramm**: neuer dritter Tab mit handgebautem SVG-Flussdiagramm
+   (Posteingang → OCR → Klassifikation → Routing-Raute →
+   Sichtprüfung/Autofall-Merge → Fallakte/Supabase → Fristüberwachung/n8n →
+   vier Ereignis-Chips) plus zwei kurzen Erläuterungstexten. Bug beim Bauen
+   gefunden+behoben: der dunkle Fristüberwachungs-Kasten renderte doppelten
+   Text (unsichtbarer dunkler Text unter dem weißen) — sauber über eine
+   Textfarben-Option der gemeinsamen `Box()`-Hilfsfunktion gelöst statt nur
+   überdeckt.
+
+### Stand am Ende der Session
+Nichts von alledem war zu diesem Zeitpunkt committed — reine
+Arbeitsverzeichnis-Änderungen (`git status` zeigte 14 geänderte + 5 neue
+Dateien). Auf ausdrücklichen "handoff"-Wunsch des Nutzers wird dieser
+Eintrag zusammen mit allen Änderungen jetzt committed (lokal, kein Push,
+wie durchgehend in diesem Projekt).
+
 ## Neu: Datendiskrepanz-Sweep in n8n verkabelt (2026-08-14)
 Direkter Folgeauftrag zum Eintrag darunter: Nutzer bestätigte "ja" auf die
 Frage, ob der fertige `POST /api/sweep/datendiskrepanz`-Endpunkt in n8n

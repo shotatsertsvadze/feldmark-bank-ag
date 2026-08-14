@@ -6,9 +6,9 @@
  *
  * Schreibt in drei Tabellen (siehe feldmark_pfaendung_schema.sql,
  * feldmark_auskunftsersuchen_schema.sql, feldmark_sichtpruefung_schema.sql):
- *  - feldmark_pfaendung_faelle / -protokoll        (unveraendert, bestehend)
- *  - feldmark_auskunftsersuchen_faelle / -protokoll (neu)
- *  - feldmark_sichtpruefung_warteschlange           (neu, typ-uebergreifend)
+ *  - feldmark.pfaendung_faelle / -protokoll        (unveraendert, bestehend)
+ *  - feldmark.auskunftsersuchen_faelle / -protokoll (neu)
+ *  - feldmark.sichtpruefung_warteschlange           (neu, typ-uebergreifend)
  */
 
 import pg from "pg";
@@ -71,21 +71,21 @@ export async function findeFallZuAktenzeichen(aktenzeichen) {
   // weiterhin sicher die Sichtpruefung - hier wird nur die Trefferquote
   // verbessert, nicht die Fehlerrichtung geaendert.
   const pf = await pool.query(
-    "SELECT fall_id FROM feldmark_pfaendung_faelle WHERE regexp_replace(aktenzeichen, '\\s+', '', 'g') = regexp_replace($1, '\\s+', '', 'g')",
+    "SELECT fall_id FROM feldmark.pfaendung_faelle WHERE regexp_replace(aktenzeichen, '\\s+', '', 'g') = regexp_replace($1, '\\s+', '', 'g')",
     [aktenzeichen]
   );
-  if (pf.rows.length) return { tabelle: "feldmark_pfaendung_faelle", fall_id: pf.rows[0].fall_id };
+  if (pf.rows.length) return { tabelle: "feldmark.pfaendung_faelle", fall_id: pf.rows[0].fall_id };
 
   const ae = await pool.query(
-    "SELECT fall_id FROM feldmark_auskunftsersuchen_faelle WHERE regexp_replace(aktenzeichen, '\\s+', '', 'g') = regexp_replace($1, '\\s+', '', 'g')",
+    "SELECT fall_id FROM feldmark.auskunftsersuchen_faelle WHERE regexp_replace(aktenzeichen, '\\s+', '', 'g') = regexp_replace($1, '\\s+', '', 'g')",
     [aktenzeichen]
   );
-  if (ae.rows.length) return { tabelle: "feldmark_auskunftsersuchen_faelle", fall_id: ae.rows[0].fall_id };
+  if (ae.rows.length) return { tabelle: "feldmark.auskunftsersuchen_faelle", fall_id: ae.rows[0].fall_id };
 
   return null;
 }
 
-// Platzhalter fuer feldmark_pfaendung_faelle.schuldner (NOT NULL), solange
+// Platzhalter fuer feldmark.pfaendung_faelle.schuldner (NOT NULL), solange
 // der Datendiskrepanz-Workflow noch laeuft - siehe legePfaendungsfallAn().
 const SCHULDNER_PLATZHALTER = "(nicht zugeordnet - Rückfrage an Gläubiger läuft)";
 
@@ -104,7 +104,7 @@ const SCHULDNER_PLATZHALTER = "(nicht zugeordnet - Rückfrage an Gläubiger läu
  * Aktenzeichen oder Glaeubiger (oder mehr als nur der Schuldnername),
  * bleibt es bei der Sichtpruefung, weil ohne diese beiden Angaben keine
  * sinnvolle Rueckfrage moeglich ist ("unser Aktenzeichen, sein
- * Aktenzeichen"). Siehe feldmark_pfaendung_datendiskrepanz_schema.sql fuer
+ * Aktenzeichen"). Siehe feldmark.pfaendung_datendiskrepanz_schema.sql fuer
  * die vollstaendige Begruendung dieser Scope-Praezisierung.
  */
 export async function legePfaendungsfallAn(klassifikation, eingang) {
@@ -123,11 +123,11 @@ export async function legePfaendungsfallAn(klassifikation, eingang) {
   }
 
   const pool = getPool();
-  const { rows } = await pool.query("SELECT nextval('feldmark_pfaendung_fall_seq') AS n");
+  const { rows } = await pool.query("SELECT nextval('feldmark.pfaendung_fall_seq') AS n");
   const fallId = `PF-${new Date().getUTCFullYear()}-${String(rows[0].n).padStart(4, "0")}`;
 
   await pool.query(
-    `INSERT INTO feldmark_pfaendung_faelle
+    `INSERT INTO feldmark.pfaendung_faelle
        (fall_id, aktenzeichen, glaeubiger, schuldner, zustelldatum, zustellkanal,
         status, bearbeiter_email, vertretung_email, vorgesetzte_email)
      VALUES ($1, $2, $3, $4, $5, $6, 'Eingegangen', $7, $8, $9)`,
@@ -148,22 +148,22 @@ export async function legePfaendungsfallAn(klassifikation, eingang) {
   // P-Konto-Pfaendbarkeitsberechnung und die Drittschuldnererklaerung
   // beide die Forderungshoehe brauchen (siehe pkonto_drittschuldner.js).
   await pool.query(
-    `INSERT INTO feldmark_pfaendung_erweiterung (fall_id, forderung_gesamt_eur, konfidenz_betrag)
+    `INSERT INTO feldmark.pfaendung_erweiterung (fall_id, forderung_gesamt_eur, konfidenz_betrag)
      VALUES ($1, $2, $3)`,
     [fallId, pfaendung.forderung_gesamt_eur ?? null, pfaendung.konfidenz_betrag ?? null]
   );
-  await protokolliere("feldmark_pfaendung_protokoll", fallId, "fall_angelegt", eingang.zustelldatum);
+  await protokolliere("feldmark.pfaendung_protokoll", fallId, "fall_angelegt", eingang.zustelldatum);
 
   if (nurSchuldnerFehlt) {
     const rueckfrageText = erzeugeRueckfrage({ aktenzeichen: kopf.aktenzeichen, fall_id: fallId });
-    await pool.query(`INSERT INTO feldmark_pfaendung_datendiskrepanz (fall_id, rueckfrage_text) VALUES ($1, $2)`, [
+    await pool.query(`INSERT INTO feldmark.pfaendung_datendiskrepanz (fall_id, rueckfrage_text) VALUES ($1, $2)`, [
       fallId,
       rueckfrageText,
     ]);
-    await protokolliere("feldmark_pfaendung_protokoll", fallId, "datendiskrepanz_rueckfrage_gesendet", eingang.zustelldatum);
+    await protokolliere("feldmark.pfaendung_protokoll", fallId, "datendiskrepanz_rueckfrage_gesendet", eingang.zustelldatum);
   }
 
-  return { angelegt: true, fall_id: fallId, tabelle: "feldmark_pfaendung_faelle", datendiskrepanz: nurSchuldnerFehlt };
+  return { angelegt: true, fall_id: fallId, tabelle: "feldmark.pfaendung_faelle", datendiskrepanz: nurSchuldnerFehlt };
 }
 
 /**
@@ -186,11 +186,11 @@ export async function legeAuskunftsersuchenFallAn(klassifikation, eingang) {
   }
 
   const pool = getPool();
-  const { rows } = await pool.query("SELECT nextval('feldmark_auskunftsersuchen_fall_seq') AS n");
+  const { rows } = await pool.query("SELECT nextval('feldmark.auskunftsersuchen_fall_seq') AS n");
   const fallId = `AE-${new Date().getUTCFullYear()}-${String(rows[0].n).padStart(4, "0")}`;
 
   await pool.query(
-    `INSERT INTO feldmark_auskunftsersuchen_faelle
+    `INSERT INTO feldmark.auskunftsersuchen_faelle
        (fall_id, aktenzeichen, ausstellende_behoerde, betroffene_person_name,
         betroffene_person_geburtsdatum, tatvorwurf, angefragte_punkte, vertraulich,
         eingangsdatum, antwortfrist_tage, zustellkanal, status,
@@ -213,17 +213,17 @@ export async function legeAuskunftsersuchenFallAn(klassifikation, eingang) {
       eingang.vorgesetzte_email ?? null,
     ]
   );
-  await protokolliere("feldmark_auskunftsersuchen_protokoll", fallId, "fall_angelegt", eingang.zustelldatum);
+  await protokolliere("feldmark.auskunftsersuchen_protokoll", fallId, "fall_angelegt", eingang.zustelldatum);
 
-  return { angelegt: true, fall_id: fallId, tabelle: "feldmark_auskunftsersuchen_faelle" };
+  return { angelegt: true, fall_id: fallId, tabelle: "feldmark.auskunftsersuchen_faelle" };
 }
 
 /** Vier-Augen-Pflicht als Protokoll-Ereignis, statt einer Extra-Spalte in
- * feldmark_pfaendung_faelle - diese Tabelle sollte laut Entscheidung
+ * feldmark.pfaendung_faelle - diese Tabelle sollte laut Entscheidung
  * unveraendert bleiben (schont den bestehenden n8n-Workflow). */
 export async function protokolliereVierAugen(tabelle, fallId, eingangsdatumIso) {
   const protokollTabelle =
-    tabelle === "feldmark_pfaendung_faelle" ? "feldmark_pfaendung_protokoll" : "feldmark_auskunftsersuchen_protokoll";
+    tabelle === "feldmark.pfaendung_faelle" ? "feldmark.pfaendung_protokoll" : "feldmark.auskunftsersuchen_protokoll";
   await protokolliere(protokollTabelle, fallId, "vier_augen_erforderlich", eingangsdatumIso);
 }
 
@@ -232,21 +232,21 @@ export async function protokolliereVierAugen(tabelle, fallId, eingangsdatumIso) 
  * Guthaben erfasst UND freigegeben). Kein Auth-System vorhanden, daher kein
  * hartes Blockieren moeglich - siehe KONTEXT.md. */
 export async function protokolliereVierAugenErklaerungUebersteuert(fallId, eingangsdatumIso) {
-  await protokolliere("feldmark_pfaendung_protokoll", fallId, "vier_augen_erklaerung_uebersteuert", eingangsdatumIso);
+  await protokolliere("feldmark.pfaendung_protokoll", fallId, "vier_augen_erklaerung_uebersteuert", eingangsdatumIso);
 }
 
 /** Ereignis "Erinnerung erhalten" gegen einen bereits bestehenden Fall -
  * legt KEINEN neuen Fall an. */
 export async function protokolliereErinnerungErhalten(tabelle, fallId, eingangsdatumIso) {
   const protokollTabelle =
-    tabelle === "feldmark_pfaendung_faelle" ? "feldmark_pfaendung_protokoll" : "feldmark_auskunftsersuchen_protokoll";
+    tabelle === "feldmark.pfaendung_faelle" ? "feldmark.pfaendung_protokoll" : "feldmark.auskunftsersuchen_protokoll";
   await protokolliere(protokollTabelle, fallId, "erinnerung_erhalten", eingangsdatumIso);
 }
 
 /** Sammelpunkt fuer alles, was laut Routing kein Autofall wird. */
 export async function legeInSichtpruefungAn({ id, dateiname, klassifikation, routing, ansichtUrl, eingangsdatum }) {
   await getPool().query(
-    `INSERT INTO feldmark_sichtpruefung_warteschlange
+    `INSERT INTO feldmark.sichtpruefung_warteschlange
        (id, dateiname, dokumenttyp, konfidenz_typ, plausibilitaet_ok,
         plausibilitaet_begruendung, routing_gruende, klassifikation,
         rohtext_auszug, ansicht_url, eingangsdatum)
@@ -283,14 +283,14 @@ export async function listeOffeneFaelle() {
     `SELECT fall_id, aktenzeichen, glaeubiger AS partei_a, schuldner AS partei_b,
             to_char(zustelldatum, 'YYYY-MM-DD') AS eingangsdatum, 14 AS antwortfrist_tage, zustellkanal,
             status, erinnerungen_gesendet, 'pfaendungsschreiben' AS dokumenttyp
-     FROM   feldmark_pfaendung_faelle
+     FROM   feldmark.pfaendung_faelle
      WHERE  status NOT IN ('Erklaerung versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis')`
   );
   const auskunftsersuchen = await pool.query(
     `SELECT fall_id, aktenzeichen, ausstellende_behoerde AS partei_a, betroffene_person_name AS partei_b,
             to_char(eingangsdatum, 'YYYY-MM-DD') AS eingangsdatum, antwortfrist_tage, zustellkanal,
             status, erinnerungen_gesendet, 'auskunftsersuchen' AS dokumenttyp
-     FROM   feldmark_auskunftsersuchen_faelle
+     FROM   feldmark.auskunftsersuchen_faelle
      WHERE  status NOT IN ('Antwort versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis')`
   );
   return [...pfaendung.rows, ...auskunftsersuchen.rows].sort((a, b) =>
@@ -304,7 +304,7 @@ export async function listeSichtpruefung() {
     `SELECT id, dateiname, dokumenttyp, konfidenz_typ, plausibilitaet_ok,
             plausibilitaet_begruendung, routing_gruende,
             to_char(eingangsdatum, 'YYYY-MM-DD') AS eingangsdatum, erzeugt_am
-     FROM   feldmark_sichtpruefung_warteschlange
+     FROM   feldmark.sichtpruefung_warteschlange
      WHERE  status = 'offen'
      ORDER  BY erzeugt_am`
   );
@@ -324,8 +324,8 @@ export async function ermittleFallMitErweiterung(fallId) {
             e.guthaben_eur, e.guthaben_erfasst_am, e.guthaben_erfasst_von, e.erklaerung_text,
             e.erklaerung_erzeugt_am, e.erklaerung_freigegeben_von, e.erklaerung_freigegeben_am,
             e.erklaerung_versendet_von, e.erklaerung_versendet_am
-     FROM   feldmark_pfaendung_faelle f
-     JOIN   feldmark_pfaendung_erweiterung e ON e.fall_id = f.fall_id
+     FROM   feldmark.pfaendung_faelle f
+     JOIN   feldmark.pfaendung_erweiterung e ON e.fall_id = f.fall_id
      WHERE  f.fall_id = $1`,
     [fallId]
   );
@@ -342,7 +342,7 @@ export async function ermittleFallMitErweiterung(fallId) {
 export async function findeAndereOffenePfaendungen(schuldner, fallIdAusschliessen) {
   const { rows } = await getPool().query(
     `SELECT fall_id, glaeubiger, to_char(zustelldatum, 'YYYY-MM-DD') AS zustelldatum
-     FROM   feldmark_pfaendung_faelle
+     FROM   feldmark.pfaendung_faelle
      WHERE  lower(schuldner) = lower($1)
        AND  fall_id <> $2
        AND  status NOT IN ('Erklaerung versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis')
@@ -355,7 +355,7 @@ export async function findeAndereOffenePfaendungen(schuldner, fallIdAusschliesse
 /** Aktualisiert die manuell erfassten Felder (P-Konto-Status, Guthaben). */
 export async function aktualisiereErweiterung(fallId, { istPKonto, freibetragErhoehungEur, guthabenEur, guthabenErfasstVon }) {
   const { rows } = await getPool().query(
-    `UPDATE feldmark_pfaendung_erweiterung
+    `UPDATE feldmark.pfaendung_erweiterung
      SET    ist_p_konto = COALESCE($2, ist_p_konto),
             p_konto_freibetrag_erhoehung = COALESCE($3, p_konto_freibetrag_erhoehung),
             guthaben_eur = COALESCE($4, guthaben_eur),
@@ -371,7 +371,7 @@ export async function aktualisiereErweiterung(fallId, { istPKonto, freibetragErh
 /** Markiert die P-Konto-Benachrichtigung als versandt (Zeitstempel = Nachweis). */
 export async function markierePKontoBenachrichtigt(fallId) {
   await getPool().query(
-    `UPDATE feldmark_pfaendung_erweiterung SET p_konto_benachrichtigt_am = now() WHERE fall_id = $1`,
+    `UPDATE feldmark.pfaendung_erweiterung SET p_konto_benachrichtigt_am = now() WHERE fall_id = $1`,
     [fallId]
   );
 }
@@ -393,7 +393,7 @@ export async function markierePKontoBenachrichtigt(fallId) {
 export async function speichereErklaerung(fallId, text) {
   const pool = getPool();
   await pool.query(
-    `UPDATE feldmark_pfaendung_erweiterung
+    `UPDATE feldmark.pfaendung_erweiterung
      SET    erklaerung_text = $2, erklaerung_erzeugt_am = now(),
             erklaerung_freigegeben_von = NULL, erklaerung_freigegeben_am = NULL,
             erklaerung_versendet_von = NULL, erklaerung_versendet_am = NULL
@@ -401,7 +401,7 @@ export async function speichereErklaerung(fallId, text) {
     [fallId, text]
   );
   await pool.query(
-    `UPDATE feldmark_pfaendung_faelle
+    `UPDATE feldmark.pfaendung_faelle
      SET    status = 'Geprueft', letzte_aktion_am = now()
      WHERE  fall_id = $1 AND status IN ('Erklaerung freigegeben', 'Erklaerung versandt')`,
     [fallId]
@@ -422,7 +422,7 @@ export async function speichereErklaerung(fallId, text) {
 export async function gibErklaerungFrei(fallId, freigegebenVon) {
   const pool = getPool();
   const { rows } = await pool.query(
-    `UPDATE feldmark_pfaendung_erweiterung
+    `UPDATE feldmark.pfaendung_erweiterung
      SET    erklaerung_freigegeben_von = $2, erklaerung_freigegeben_am = now()
      WHERE  fall_id = $1 AND erklaerung_text IS NOT NULL
      RETURNING *`,
@@ -430,7 +430,7 @@ export async function gibErklaerungFrei(fallId, freigegebenVon) {
   );
   if (!rows[0]) return null;
   await pool.query(
-    `UPDATE feldmark_pfaendung_faelle SET status = 'Erklaerung freigegeben', letzte_aktion_am = now() WHERE fall_id = $1`,
+    `UPDATE feldmark.pfaendung_faelle SET status = 'Erklaerung freigegeben', letzte_aktion_am = now() WHERE fall_id = $1`,
     [fallId]
   );
   return rows[0];
@@ -445,7 +445,7 @@ export async function gibErklaerungFrei(fallId, freigegebenVon) {
 export async function bestaetigeVersand(fallId, versendetVon) {
   const pool = getPool();
   const { rows } = await pool.query(
-    `UPDATE feldmark_pfaendung_erweiterung
+    `UPDATE feldmark.pfaendung_erweiterung
      SET    erklaerung_versendet_von = $2, erklaerung_versendet_am = now()
      WHERE  fall_id = $1 AND erklaerung_freigegeben_am IS NOT NULL
      RETURNING *`,
@@ -453,7 +453,7 @@ export async function bestaetigeVersand(fallId, versendetVon) {
   );
   if (!rows[0]) return null;
   await pool.query(
-    `UPDATE feldmark_pfaendung_faelle SET status = 'Erklaerung versandt', letzte_aktion_am = now() WHERE fall_id = $1`,
+    `UPDATE feldmark.pfaendung_faelle SET status = 'Erklaerung versandt', letzte_aktion_am = now() WHERE fall_id = $1`,
     [fallId]
   );
   return rows[0];
@@ -461,7 +461,7 @@ export async function bestaetigeVersand(fallId, versendetVon) {
 
 // ===================================================================
 // Datendiskrepanz-Workflow (Sollkonzept 3.1, Ast A) - siehe
-// feldmark_pfaendung_datendiskrepanz_schema.sql und datendiskrepanz.js
+// feldmark.pfaendung_datendiskrepanz_schema.sql und datendiskrepanz.js
 // fuer Begruendung und Textbausteine.
 // ===================================================================
 
@@ -476,8 +476,8 @@ export async function listeOffeneDatendiskrepanzen() {
             d.rueckfrage_text, d.rueckfrage_gesendet_am,
             d.nachfassung_1_gesendet_am, d.nachfassung_2_gesendet_am,
             d.fristwahrend_erklaert_am
-     FROM   feldmark_pfaendung_datendiskrepanz d
-     JOIN   feldmark_pfaendung_faelle f ON f.fall_id = d.fall_id
+     FROM   feldmark.pfaendung_datendiskrepanz d
+     JOIN   feldmark.pfaendung_faelle f ON f.fall_id = d.fall_id
      WHERE  d.geklaert_am IS NULL AND d.geschlossen_am IS NULL
      ORDER  BY d.rueckfrage_gesendet_am`
   );
@@ -495,8 +495,8 @@ export async function ermittleDatendiskrepanz(fallId) {
             d.fristwahrend_erklaert_am,
             d.geklaert_am, d.geklaert_schuldner_name, d.geklaert_von,
             d.geschlossen_am, d.geschlossen_grund
-     FROM   feldmark_pfaendung_datendiskrepanz d
-     JOIN   feldmark_pfaendung_faelle f ON f.fall_id = d.fall_id
+     FROM   feldmark.pfaendung_datendiskrepanz d
+     JOIN   feldmark.pfaendung_faelle f ON f.fall_id = d.fall_id
      WHERE  d.fall_id = $1`,
     [fallId]
   );
@@ -508,7 +508,7 @@ export async function protokolliereNachfassung(fallId, nummer, text) {
   const spalteText = nummer === 1 ? "nachfassung_1_text" : "nachfassung_2_text";
   const spalteAm = nummer === 1 ? "nachfassung_1_gesendet_am" : "nachfassung_2_gesendet_am";
   await getPool().query(
-    `UPDATE feldmark_pfaendung_datendiskrepanz SET ${spalteText} = $2, ${spalteAm} = now() WHERE fall_id = $1`,
+    `UPDATE feldmark.pfaendung_datendiskrepanz SET ${spalteText} = $2, ${spalteAm} = now() WHERE fall_id = $1`,
     [fallId, text]
   );
 }
@@ -517,15 +517,15 @@ export async function protokolliereNachfassung(fallId, nummer, text) {
  * A3: markiert den Ausloese-Zeitpunkt der fristwahrenden Erklaerung
  * (Idempotenz-Sperre fuer den Sweep) und setzt den Fall-Status. Der
  * Erklaerungstext selbst wird ueber speichereErklaerung() in
- * feldmark_pfaendung_erweiterung geschrieben - siehe Aufrufer im Sweep.
+ * feldmark.pfaendung_erweiterung geschrieben - siehe Aufrufer im Sweep.
  */
 export async function markiereFristwahrendErklaert(fallId) {
   const pool = getPool();
-  await pool.query(`UPDATE feldmark_pfaendung_datendiskrepanz SET fristwahrend_erklaert_am = now() WHERE fall_id = $1`, [
+  await pool.query(`UPDATE feldmark.pfaendung_datendiskrepanz SET fristwahrend_erklaert_am = now() WHERE fall_id = $1`, [
     fallId,
   ]);
   await pool.query(
-    `UPDATE feldmark_pfaendung_faelle SET status = 'Klaerung offen - fristwahrend erklaert', letzte_aktion_am = now() WHERE fall_id = $1`,
+    `UPDATE feldmark.pfaendung_faelle SET status = 'Klaerung offen - fristwahrend erklaert', letzte_aktion_am = now() WHERE fall_id = $1`,
     [fallId]
   );
 }
@@ -540,14 +540,14 @@ export async function markiereFristwahrendErklaert(fallId) {
 export async function reaktiviereDatendiskrepanzFall(fallId, schuldnerName, von) {
   const pool = getPool();
   const { rows } = await pool.query(
-    `UPDATE feldmark_pfaendung_datendiskrepanz
+    `UPDATE feldmark.pfaendung_datendiskrepanz
      SET    geklaert_am = now(), geklaert_schuldner_name = $2, geklaert_von = $3
      WHERE  fall_id = $1 AND geklaert_am IS NULL AND geschlossen_am IS NULL
      RETURNING *`,
     [fallId, schuldnerName, von]
   );
   if (!rows[0]) return null;
-  await pool.query(`UPDATE feldmark_pfaendung_faelle SET schuldner = $2, status = 'Geprueft', letzte_aktion_am = now() WHERE fall_id = $1`, [
+  await pool.query(`UPDATE feldmark.pfaendung_faelle SET schuldner = $2, status = 'Geprueft', letzte_aktion_am = now() WHERE fall_id = $1`, [
     fallId,
     schuldnerName,
   ]);
@@ -558,14 +558,14 @@ export async function reaktiviereDatendiskrepanzFall(fallId, schuldnerName, von)
 export async function schliesseDatendiskrepanzUngeklaert(fallId, grund) {
   const pool = getPool();
   const { rows } = await pool.query(
-    `UPDATE feldmark_pfaendung_datendiskrepanz
+    `UPDATE feldmark.pfaendung_datendiskrepanz
      SET    geschlossen_am = now(), geschlossen_grund = $2
      WHERE  fall_id = $1 AND geklaert_am IS NULL AND geschlossen_am IS NULL
      RETURNING *`,
     [fallId, grund]
   );
   if (!rows[0]) return null;
-  await pool.query(`UPDATE feldmark_pfaendung_faelle SET status = 'Abgeschlossen', letzte_aktion_am = now() WHERE fall_id = $1`, [
+  await pool.query(`UPDATE feldmark.pfaendung_faelle SET status = 'Abgeschlossen', letzte_aktion_am = now() WHERE fall_id = $1`, [
     fallId,
   ]);
   return rows[0];
@@ -583,9 +583,69 @@ export async function holeFaelligeDatendiskrepanzen() {
             to_char(f.zustelldatum, 'YYYY-MM-DD') AS zustelldatum,
             d.rueckfrage_gesendet_am, d.nachfassung_1_gesendet_am,
             d.nachfassung_2_gesendet_am, d.fristwahrend_erklaert_am
-     FROM   feldmark_pfaendung_datendiskrepanz d
-     JOIN   feldmark_pfaendung_faelle f ON f.fall_id = d.fall_id
+     FROM   feldmark.pfaendung_datendiskrepanz d
+     JOIN   feldmark.pfaendung_faelle f ON f.fall_id = d.fall_id
      WHERE  d.geklaert_am IS NULL AND d.geschlossen_am IS NULL`
+  );
+  return rows;
+}
+
+/**
+ * Fall-Verlauf fuer die Detailansicht: jedes protokollierte Ereignis (vom
+ * n8n-Sweep UND von der App selbst - Fallanlage, Vier-Augen, Datendiskrepanz-
+ * Rueckfrage), neueste zuerst. Die Protokoll-Tabellen existierten schon
+ * vorher als KPI-Basis (siehe protokolliere() oben), wurden aber nirgends
+ * angezeigt - reine Audit-Daten-Leiche. Tabelle wird aus dem fall_id-Praefix
+ * abgeleitet (PF- vs. AE-), genau wie bei der ID-Vergabe selbst - keine
+ * zusaetzliche Typ-Angabe vom Aufrufer noetig.
+ */
+/**
+ * Aktivitaets-Feed ueber ALLE Faelle hinweg (Pfaendung + Auskunftsersuchen),
+ * neueste zuerst - "was hat der taegliche Sweep zuletzt automatisch getan".
+ * Gleiche Idee wie holeProtokoll(), aber fallübergreifend fuer einen
+ * Ueberblick statt der Detailansicht eines einzelnen Falls. partei_a/
+ * partei_b folgen derselben Benennung wie in listeOffeneFaelle().
+ */
+export async function holeAktivitaetsfeed(limit = 20) {
+  const { rows } = await getPool().query(
+    `(SELECT p.fall_id, p.ereignis, p.erzeugt_am, p.empfaenger,
+             f.glaeubiger AS partei_a, f.schuldner AS partei_b,
+             'pfaendungsschreiben' AS dokumenttyp
+      FROM   feldmark.pfaendung_protokoll p
+      JOIN   feldmark.pfaendung_faelle f ON f.fall_id = p.fall_id)
+     UNION ALL
+     (SELECT p.fall_id, p.ereignis, p.erzeugt_am, p.empfaenger,
+             f.ausstellende_behoerde AS partei_a, f.betroffene_person_name AS partei_b,
+             'auskunftsersuchen' AS dokumenttyp
+      FROM   feldmark.auskunftsersuchen_protokoll p
+      JOIN   feldmark.auskunftsersuchen_faelle f ON f.fall_id = p.fall_id)
+     ORDER BY erzeugt_am DESC
+     LIMIT $1`,
+    [limit]
+  );
+  return rows;
+}
+
+/**
+ * Letzter bekannter Stand beider n8n-Sweeps (feldmark.sweep_status wird
+ * NICHT von dieser App geschrieben, sondern von n8n selbst - siehe
+ * feldmark_sweep_status_schema.sql). Reiner Lesezugriff.
+ */
+export async function holeSweepStatus() {
+  const { rows } = await getPool().query(
+    `SELECT sweep_name, status, zuletzt_gelaufen_am, meldung FROM feldmark.sweep_status ORDER BY sweep_name`
+  );
+  return rows;
+}
+
+export async function holeProtokoll(fallId) {
+  const tabelle = fallId.startsWith("AE-") ? "feldmark.auskunftsersuchen_protokoll" : "feldmark.pfaendung_protokoll";
+  const { rows } = await getPool().query(
+    `SELECT id, ereignis, fristende, rest_tage, empfaenger, prioritaet, erzeugt_am
+     FROM   ${tabelle}
+     WHERE  fall_id = $1
+     ORDER  BY erzeugt_am DESC`,
+    [fallId]
   );
   return rows;
 }

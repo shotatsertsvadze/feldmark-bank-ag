@@ -11,15 +11,17 @@
 --  Stelle steht der Typ ja gerade NICHT sicher fest (das ist ja der Grund,
 --  warum der Fall hier landet), ein Mitarbeiter prueft die volle
 --  Klassifikation (jsonb) und entscheidet erst dann, ob und in welche
---  Faelle-Tabelle (feldmark_pfaendung_faelle oder
---  feldmark_auskunftsersuchen_faelle) daraus ein echter Fall wird.
+--  Faelle-Tabelle (feldmark.pfaendung_faelle oder
+--  feldmark.auskunftsersuchen_faelle) daraus ein echter Fall wird.
 --
 --  Einmalig ausfuehren. Getestet gegen PostgreSQL 15/16.
 -- =====================================================================
 
-DROP TABLE IF EXISTS feldmark_sichtpruefung_warteschlange;
+CREATE SCHEMA IF NOT EXISTS feldmark;
 
-CREATE TABLE feldmark_sichtpruefung_warteschlange (
+DROP TABLE IF EXISTS feldmark.sichtpruefung_warteschlange;
+
+CREATE TABLE feldmark.sichtpruefung_warteschlange (
     id                    uuid        PRIMARY KEY,
     dateiname             text        NOT NULL,
     dokumenttyp           text        NOT NULL
@@ -43,7 +45,7 @@ CREATE TABLE feldmark_sichtpruefung_warteschlange (
     status                text        NOT NULL DEFAULT 'offen'
                           CHECK (status IN ('offen', 'uebernommen', 'verworfen')),
     -- Gefuellt, sobald ein Mitarbeiter den Fall bestaetigt und in
-    -- feldmark_pfaendung_faelle oder feldmark_auskunftsersuchen_faelle
+    -- feldmark.pfaendung_faelle oder feldmark.auskunftsersuchen_faelle
     -- angelegt hat - stellt die Nachvollziehbarkeit her.
     uebernommen_als_fall_id text,
     geprueft_von          text,
@@ -51,9 +53,9 @@ CREATE TABLE feldmark_sichtpruefung_warteschlange (
     erzeugt_am            timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_sichtpruefung_status ON feldmark_sichtpruefung_warteschlange (status, erzeugt_am);
+CREATE INDEX idx_sichtpruefung_status ON feldmark.sichtpruefung_warteschlange (status, erzeugt_am);
 
-COMMENT ON COLUMN feldmark_sichtpruefung_warteschlange.eingangsdatum IS
+COMMENT ON COLUMN feldmark.sichtpruefung_warteschlange.eingangsdatum IS
     'Wie bei den Faelle-Tabellen: kommt aus Scan-/E-Mail-Metadaten, nie aus
      dem Dokumenttext oder vom Modell erfunden. Kann hier NULL sein, wenn
      der Upload das (noch) nicht mitliefert.';
@@ -62,7 +64,7 @@ COMMENT ON COLUMN feldmark_sichtpruefung_warteschlange.eingangsdatum IS
 -- Testdaten — je ein Vertreter pro Routing-Grund, plus die zwei echten
 -- Testfaelle aus Schritt 2 (Betriebsrat-Wahlliste, Antwort_ZIS_2016).
 -- ---------------------------------------------------------------------
-INSERT INTO feldmark_sichtpruefung_warteschlange
+INSERT INTO feldmark.sichtpruefung_warteschlange
     (id, dateiname, dokumenttyp, konfidenz_typ, plausibilitaet_ok,
      plausibilitaet_begruendung, routing_gruende, klassifikation,
      rohtext_auszug, eingangsdatum, status)
@@ -105,7 +107,7 @@ VALUES
      '{"dokumenttyp":"pfaendungsschreiben","konfidenz_typ":60}'::jsonb,
      'Amtsgericht Bochum ...', CURRENT_DATE - 9, 'uebernommen');
 
-UPDATE feldmark_sichtpruefung_warteschlange
+UPDATE feldmark.sichtpruefung_warteschlange
 SET    uebernommen_als_fall_id = 'PF-2026-9001',
        geprueft_von = 'bearbeiter@example.com',
        geprueft_am  = now() - interval '2 days'
@@ -117,10 +119,10 @@ WHERE  dateiname = 'geprueft_beispiel.jpg';
 
 -- Offene Warteschlange, aeltester Fall zuerst:
 --   SELECT id, dateiname, dokumenttyp, plausibilitaet_ok, routing_gruende, erzeugt_am
---   FROM   feldmark_sichtpruefung_warteschlange
+--   FROM   feldmark.sichtpruefung_warteschlange
 --   WHERE  status = 'offen'
 --   ORDER  BY erzeugt_am;
 
 -- Zuruecksetzen fuer einen erneuten Testlauf:
---   TRUNCATE feldmark_sichtpruefung_warteschlange;
+--   TRUNCATE feldmark.sichtpruefung_warteschlange;
 --   (danach die INSERT/UPDATE-Bloecke oben erneut ausfuehren)

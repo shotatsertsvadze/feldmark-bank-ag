@@ -2,7 +2,7 @@
 --  Feldmark Bank AG — Pfaendungsprozess, Erweiterung P-Konto +
 --  automatisierte Drittschuldnererklaerung
 --
---  Separate Tabelle statt neuer Spalten in feldmark_pfaendung_faelle:
+--  Separate Tabelle statt neuer Spalten in feldmark.pfaendung_faelle:
 --  Diese Tabelle bleibt laut fruehrer Entscheidung unveraendert, um den
 --  bereits getesteten n8n-Fristueberwachungs-Workflow nicht anzufassen
 --  (SELECT * dort wuerde neue Spalten zwar vertragen, aber das Risiko ist
@@ -17,9 +17,11 @@
 --  und behoben wurde (siehe KONTEXT.md, "Zwei echte Bugs").
 -- =====================================================================
 
-CREATE TABLE IF NOT EXISTS feldmark_pfaendung_erweiterung (
+CREATE SCHEMA IF NOT EXISTS feldmark;
+
+CREATE TABLE IF NOT EXISTS feldmark.pfaendung_erweiterung (
     fall_id                      text        PRIMARY KEY
-                                  REFERENCES feldmark_pfaendung_faelle (fall_id),
+                                  REFERENCES feldmark.pfaendung_faelle (fall_id),
 
     -- Aus der Klassifikation uebernommen, bisher von legePfaendungsfallAn()
     -- verworfen (siehe server/db.js) — wird jetzt hier mitgefuehrt, weil
@@ -52,22 +54,22 @@ CREATE TABLE IF NOT EXISTS feldmark_pfaendung_erweiterung (
     erklaerung_versendet_am      timestamptz
 );
 
-COMMENT ON TABLE feldmark_pfaendung_erweiterung IS
-    '1:1-Erweiterung zu feldmark_pfaendung_faelle fuer P-Konto-Pruefung und
+COMMENT ON TABLE feldmark.pfaendung_erweiterung IS
+    '1:1-Erweiterung zu feldmark.pfaendung_faelle fuer P-Konto-Pruefung und
      automatisierte Drittschuldnererklaerung. Siehe
      Pfaendung_PKonto_Drittschuldnererklaerung_Ergaenzung.html.';
 
-COMMENT ON COLUMN feldmark_pfaendung_erweiterung.guthaben_erfasst_von IS
+COMMENT ON COLUMN feldmark.pfaendung_erweiterung.guthaben_erfasst_von IS
     'Kuerzel/E-Mail der Person, die das Guthaben zuletzt gespeichert hat.
      Grundlage fuer die weiche Vier-Augen-Warnung bei Freigabe (kein
      echtes Auth-System vorhanden, siehe KONTEXT.md).';
 
-COMMENT ON COLUMN feldmark_pfaendung_erweiterung.erklaerung_versendet_am IS
+COMMENT ON COLUMN feldmark.pfaendung_erweiterung.erklaerung_versendet_am IS
     'Zweiter Schritt nach Freigabe: Mitarbeiter bestaetigt manuell den
      tatsaechlichen Versand (kein echter Versand-Kanal angebunden). Erst
      dieser Zeitstempel setzt fall.status auf "Erklaerung versandt".';
 
-COMMENT ON COLUMN feldmark_pfaendung_erweiterung.p_konto_freibetrag_erhoehung IS
+COMMENT ON COLUMN feldmark.pfaendung_erweiterung.p_konto_freibetrag_erhoehung IS
     'Summe der Erhoehungsbetraege ueber den Grundfreibetrag hinaus, aus
      geprueften Bescheinigungen (Unterhaltspflichten, Kindergeld etc.).
      Grundfreibetrag selbst (1.590,00 EUR ab 1.7.2026) ist Code-Konstante,

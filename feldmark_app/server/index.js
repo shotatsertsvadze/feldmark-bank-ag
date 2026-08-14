@@ -98,7 +98,7 @@ async function verarbeiteDatei(file, eingang) {
         ansichtUrl: basis.ansicht_url,
         eingangsdatum: eingang.zustelldatum,
       });
-      fallergebnis = { angelegt: false, tabelle: "feldmark_sichtpruefung_warteschlange" };
+      fallergebnis = { angelegt: false, tabelle: "feldmark.sichtpruefung_warteschlange" };
     } else if (klassifikation.dokumenttyp === "erinnerungsschreiben") {
       await db.protokolliereErinnerungErhalten(erinnerungTreffer.tabelle, erinnerungTreffer.fall_id, eingang.zustelldatum);
       fallergebnis = { angelegt: false, zugeordnet_zu: erinnerungTreffer.fall_id, tabelle: erinnerungTreffer.tabelle };
@@ -135,7 +135,7 @@ async function verarbeiteDatei(file, eingang) {
         ansichtUrl: basis.ansicht_url,
         eingangsdatum: eingang.zustelldatum,
       });
-      fallergebnis = { angelegt: false, tabelle: "feldmark_sichtpruefung_warteschlange" };
+      fallergebnis = { angelegt: false, tabelle: "feldmark.sichtpruefung_warteschlange" };
     }
 
     if (fallergebnis?.angelegt && routing.vier_augen_erforderlich) {
@@ -153,6 +153,7 @@ async function verarbeiteDatei(file, eingang) {
       rohtext: ocrErgebnis.markdown,
     };
   } catch (fehler) {
+    console.error(`[verarbeiteDatei] ${file.originalname}:`, fehler);
     return {
       ...basis,
       status: "fehler",
@@ -187,6 +188,7 @@ app.get("/api/faelle", async (req, res) => {
   try {
     res.json({ faelle: await db.listeOffeneFaelle() });
   } catch (fehler) {
+    console.error("[GET /api/faelle]", fehler);
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }
 });
@@ -195,6 +197,35 @@ app.get("/api/sichtpruefung", async (req, res) => {
   try {
     res.json({ eintraege: await db.listeSichtpruefung() });
   } catch (fehler) {
+    console.error("[GET /api/sichtpruefung]", fehler);
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+app.get("/api/aktivitaet", async (req, res) => {
+  try {
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    res.json({ eintraege: await db.holeAktivitaetsfeed(limit) });
+  } catch (fehler) {
+    console.error("[GET /api/aktivitaet]", fehler);
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+app.get("/api/sweep-status", async (req, res) => {
+  try {
+    res.json({ sweeps: await db.holeSweepStatus() });
+  } catch (fehler) {
+    console.error("[GET /api/sweep-status]", fehler);
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+app.get("/api/faelle/:fallId/protokoll", async (req, res) => {
+  try {
+    res.json({ eintraege: await db.holeProtokoll(req.params.fallId) });
+  } catch (fehler) {
+    console.error(`[GET /api/faelle/${req.params.fallId}/protokoll]`, fehler);
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }
 });
@@ -205,6 +236,7 @@ app.get("/api/faelle/:fallId/erweiterung", async (req, res) => {
     if (!fall) return res.status(404).json({ fehler: "Fall nicht gefunden." });
     res.json({ fall });
   } catch (fehler) {
+    console.error(`[GET /api/faelle/${req.params.fallId}/erweiterung]`, fehler);
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }
 });
@@ -233,6 +265,7 @@ app.put("/api/faelle/:fallId/erweiterung", async (req, res) => {
     }
     res.json({ erweiterung: aktualisiert, p_konto_benachrichtigung_ausgeloest: benachrichtigungAusgeloest });
   } catch (fehler) {
+    console.error(`[PUT /api/faelle/${req.params.fallId}/erweiterung]`, fehler);
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }
 });
@@ -249,6 +282,7 @@ app.post("/api/faelle/:fallId/erklaerung", async (req, res) => {
     await db.speichereErklaerung(fall.fall_id, ergebnis.text);
     res.json({ erklaerung_text: ergebnis.text });
   } catch (fehler) {
+    console.error(`[POST /api/faelle/${req.params.fallId}/erklaerung]`, fehler);
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }
 });
@@ -297,6 +331,7 @@ app.post("/api/faelle/:fallId/erklaerung/freigeben", async (req, res) => {
     }
     res.json({ erweiterung: ergebnis });
   } catch (fehler) {
+    console.error(`[POST /api/faelle/${req.params.fallId}/erklaerung/freigeben]`, fehler);
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }
 });
@@ -312,6 +347,7 @@ app.post("/api/faelle/:fallId/erklaerung/versenden", async (req, res) => {
     if (!ergebnis) return res.status(404).json({ fehler: "Fall nicht gefunden oder noch nicht freigegeben." });
     res.json({ erweiterung: ergebnis });
   } catch (fehler) {
+    console.error(`[POST /api/faelle/${req.params.fallId}/erklaerung/versenden]`, fehler);
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }
 });
@@ -325,6 +361,7 @@ app.get("/api/datendiskrepanz", async (req, res) => {
   try {
     res.json({ faelle: await db.listeOffeneDatendiskrepanzen() });
   } catch (fehler) {
+    console.error("[GET /api/datendiskrepanz]", fehler);
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }
 });
@@ -335,6 +372,7 @@ app.get("/api/faelle/:fallId/datendiskrepanz", async (req, res) => {
     if (!eintrag) return res.status(404).json({ fehler: "Kein Datendiskrepanz-Eintrag fuer diesen Fall." });
     res.json({ datendiskrepanz: eintrag });
   } catch (fehler) {
+    console.error(`[GET /api/faelle/${req.params.fallId}/datendiskrepanz]`, fehler);
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }
 });
@@ -351,6 +389,7 @@ app.post("/api/faelle/:fallId/datendiskrepanz/reaktivieren", async (req, res) =>
     if (!ergebnis) return res.status(404).json({ fehler: "Fall nicht gefunden oder bereits geklaert/geschlossen." });
     res.json({ datendiskrepanz: ergebnis });
   } catch (fehler) {
+    console.error(`[POST /api/faelle/${req.params.fallId}/datendiskrepanz/reaktivieren]`, fehler);
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }
 });
@@ -411,6 +450,7 @@ app.post("/api/sweep/datendiskrepanz", async (req, res) => {
     }
     res.json({ geprueft: faelle.length, aktionen });
   } catch (fehler) {
+    console.error("[POST /api/sweep/datendiskrepanz]", fehler);
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }
 });

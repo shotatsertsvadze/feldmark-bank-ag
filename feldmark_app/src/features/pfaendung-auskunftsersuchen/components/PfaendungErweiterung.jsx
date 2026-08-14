@@ -49,6 +49,7 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
   const [vierAugenWarnung, setVierAugenWarnung] = useState(null);
   const [versendetVon, setVersendetVon] = useState("");
   const [bestaetigtVersand, setBestaetigtVersand] = useState(false);
+  const [zeigtModal, setZeigtModal] = useState(false);
 
   const [istPKonto, setIstPKonto] = useState(false);
   const [freibetragErhoehung, setFreibetragErhoehung] = useState("");
@@ -74,6 +75,15 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
       abgebrochen = true;
     };
   }, [fallId]);
+
+  useEffect(() => {
+    if (!zeigtModal) return;
+    function aufEscape(e) {
+      if (e.key === "Escape") setZeigtModal(false);
+    }
+    window.addEventListener("keydown", aufEscape);
+    return () => window.removeEventListener("keydown", aufEscape);
+  }, [zeigtModal]);
 
   // Gibt { ok, p_konto_benachrichtigung_ausgeloest } statt eines rohen
   // Booleans zurueck - vorher war "false" doppeldeutig zwischen "Speichern
@@ -122,6 +132,7 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
       }));
       setFreigebenName("");
       setVersendetVon("");
+      setZeigtModal(true);
     } catch (e) {
       setFehler(String(e.message || e));
     } finally {
@@ -240,69 +251,85 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
         <button className="nav-tabs__btn" onClick={erklaerungErstellen} disabled={erzeugtErklaerung || guthaben === ""}>
           {erzeugtErklaerung ? "Erzeugt …" : "Drittschuldnererklärung erzeugen"}
         </button>
+        {erw.erklaerung_text && (
+          <button className="nav-tabs__btn" onClick={() => setZeigtModal(true)}>
+            Erklärung anzeigen
+          </button>
+        )}
       </div>
 
       {konfidenzWarnung && <p className="erweiterung__warnhinweis">{konfidenzWarnung}</p>}
       {altersWarnung && <p className="erweiterung__warnhinweis">{altersWarnung}</p>}
 
-      {erw.erklaerung_text && (
-        <div className="erweiterung__erklaerung">
-          <textarea readOnly value={erw.erklaerung_text} rows={14} />
-
-          {!istFreigegeben && (
-            <div className="erweiterung__aktionen">
-              <input
-                type="text"
-                placeholder="Kürzel/E-Mail zur Freigabe"
-                value={freigebenName}
-                onChange={(e) => {
-                  setFreigebenName(e.target.value);
-                  setVierAugenWarnung(null);
-                }}
-              />
-              <button className="nav-tabs__btn" onClick={() => freigeben(false)} disabled={gibtFrei || !freigebenName.trim()}>
-                {gibtFrei ? "Gibt frei …" : "Freigeben"}
+      {erw.erklaerung_text && zeigtModal && (
+        <div className="erweiterung__modal-overlay" onClick={() => setZeigtModal(false)}>
+          <div className="erweiterung__modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="erweiterung__modal-kopf">
+              <h3>Drittschuldnererklärung — {fallId}</h3>
+              <button className="erweiterung__modal-schliessen" onClick={() => setZeigtModal(false)} aria-label="Schließen">
+                ×
               </button>
             </div>
-          )}
 
-          {vierAugenWarnung && (
-            <div className="erweiterung__vier-augen">
-              {vierAugenWarnung}
-              <div className="erweiterung__aktionen">
-                <button className="nav-tabs__btn" onClick={() => freigeben(true)} disabled={gibtFrei}>
-                  {gibtFrei ? "Gibt frei …" : "Trotzdem freigeben"}
-                </button>
-              </div>
+            <div className="erweiterung__erklaerung">
+              <textarea readOnly value={erw.erklaerung_text} rows={14} />
+
+              {!istFreigegeben && (
+                <div className="erweiterung__aktionen">
+                  <input
+                    type="text"
+                    placeholder="Kürzel/E-Mail zur Freigabe"
+                    value={freigebenName}
+                    onChange={(e) => {
+                      setFreigebenName(e.target.value);
+                      setVierAugenWarnung(null);
+                    }}
+                  />
+                  <button className="nav-tabs__btn" onClick={() => freigeben(false)} disabled={gibtFrei || !freigebenName.trim()}>
+                    {gibtFrei ? "Gibt frei …" : "Freigeben"}
+                  </button>
+                </div>
+              )}
+
+              {vierAugenWarnung && (
+                <div className="erweiterung__vier-augen">
+                  {vierAugenWarnung}
+                  <div className="erweiterung__aktionen">
+                    <button className="nav-tabs__btn" onClick={() => freigeben(true)} disabled={gibtFrei}>
+                      {gibtFrei ? "Gibt frei …" : "Trotzdem freigeben"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {istFreigegeben && !istVersendet && (
+                <>
+                  <p className="erweiterung__status erweiterung__status--ausstehend">
+                    <strong>Freigegeben</strong> von {erw.erklaerung_freigegeben_von} am {datumUhrzeit(erw.erklaerung_freigegeben_am)}.
+                    Versand noch ausstehend — nach dem tatsächlichen Versand hier bestätigen.
+                  </p>
+                  <div className="erweiterung__aktionen">
+                    <input
+                      type="text"
+                      placeholder="Kürzel/E-Mail (wer hat versendet)"
+                      value={versendetVon}
+                      onChange={(e) => setVersendetVon(e.target.value)}
+                    />
+                    <button className="nav-tabs__btn" onClick={versandBestaetigen} disabled={bestaetigtVersand || !versendetVon.trim()}>
+                      {bestaetigtVersand ? "Bestätigt …" : "Versand bestätigen"}
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {istVersendet && (
+                <p className="erweiterung__status erweiterung__status--abgeschlossen">
+                  <strong>Versendet</strong> von {erw.erklaerung_versendet_von} am {datumUhrzeit(erw.erklaerung_versendet_am)}
+                  {" "}(freigegeben von {erw.erklaerung_freigegeben_von} am {datumUhrzeit(erw.erklaerung_freigegeben_am)}).
+                </p>
+              )}
             </div>
-          )}
-
-          {istFreigegeben && !istVersendet && (
-            <>
-              <p className="erweiterung__status erweiterung__status--ausstehend">
-                <strong>Freigegeben</strong> von {erw.erklaerung_freigegeben_von} am {datumUhrzeit(erw.erklaerung_freigegeben_am)}.
-                Versand noch ausstehend — nach dem tatsächlichen Versand hier bestätigen.
-              </p>
-              <div className="erweiterung__aktionen">
-                <input
-                  type="text"
-                  placeholder="Kürzel/E-Mail (wer hat versendet)"
-                  value={versendetVon}
-                  onChange={(e) => setVersendetVon(e.target.value)}
-                />
-                <button className="nav-tabs__btn" onClick={versandBestaetigen} disabled={bestaetigtVersand || !versendetVon.trim()}>
-                  {bestaetigtVersand ? "Bestätigt …" : "Versand bestätigen"}
-                </button>
-              </div>
-            </>
-          )}
-
-          {istVersendet && (
-            <p className="erweiterung__status erweiterung__status--abgeschlossen">
-              <strong>Versendet</strong> von {erw.erklaerung_versendet_von} am {datumUhrzeit(erw.erklaerung_versendet_am)}
-              {" "}(freigegeben von {erw.erklaerung_freigegeben_von} am {datumUhrzeit(erw.erklaerung_freigegeben_am)}).
-            </p>
-          )}
+          </div>
         </div>
       )}
     </div>

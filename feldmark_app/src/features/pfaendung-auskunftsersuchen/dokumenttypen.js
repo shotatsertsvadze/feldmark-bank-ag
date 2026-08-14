@@ -7,6 +7,22 @@ export const DOKUMENTTYP_LABEL = {
   sonstiges: "Sonstiges",
 };
 
+// Bewusst dieselbe Farbsemantik wie ueberall sonst im Projekt (moss=neutral/
+// erledigt, ochre=Achtung, oxblood=kritisch, slate=in Bearbeitung) - keine
+// neue Farbwelt nur fuer Verlauf/Aktivitaetsfeed. Von Fallverlauf.jsx UND
+// Aktivitaetsfeed.jsx genutzt, damit ein Ereignis ueberall gleich aussieht.
+export const EREIGNIS_LABEL = {
+  fall_angelegt: { label: "Fall angelegt", farbe: "slate" },
+  erinnerung_erhalten: { label: "Erinnerungsschreiben erhalten", farbe: "slate" },
+  erinnerung_1: { label: "Erinnerung 1 gesendet", farbe: "slate" },
+  erinnerung_2: { label: "Erinnerung 2 gesendet", farbe: "ochre" },
+  eskalation: { label: "Eskalation an Vorgesetzte:n", farbe: "oxblood" },
+  fristversaeumnis: { label: "Fristversäumnis dokumentiert", farbe: "oxblood" },
+  vier_augen_erforderlich: { label: "Vier-Augen-Prüfung erforderlich", farbe: "ochre" },
+  vier_augen_erklaerung_uebersteuert: { label: "Vier-Augen-Warnung übersteuert", farbe: "oxblood" },
+  datendiskrepanz_rueckfrage_gesendet: { label: "Rückfrage wegen Datendiskrepanz gesendet", farbe: "ochre" },
+};
+
 /** Stempel-Inhalt aus einem Verarbeitungsergebnis von POST /api/klassifizieren. */
 export function stempelAusErgebnis(ergebnis) {
   if (ergebnis.status === "fehler") {
