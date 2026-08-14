@@ -10,6 +10,89 @@ gehört jetzt eine App-Shell mit Sidebar-Navigation, sodass sie als erste von
 perspektivisch mehreren Features der größeren Feldmark-Projekt-App fungiert
 (siehe Architektur unten).
 
+## Neu fürs Wiedereinsteigen: Datendiskrepanz-Workflow gebaut (2026-08-14, morgens)
+Nutzer war morgens wieder da (nicht mehr autonome Nachtarbeit, normale
+Session) und bat direkt: "Datendiskrepanz-Workflow bauen" — als Reaktion auf
+den wichtigsten Fund aus dem Methodik-Dokument (siehe Eintrag darunter):
+Sollkonzept 3.1 (Ast A), selbst als bestes Aufwand-Nutzen-Verhältnis im
+ganzen Konzept bezeichnet, war nicht implementiert.
+
+**Scope-Präzisierung gegenüber dem Sollkonzept** (transparent kommuniziert,
+nicht stillschweigend vereinfacht): Die im Sollkonzept beschriebene
+Trefferhierarchie (IBAN/Kontonummer, Name+Geburtsdatum+Adresse gegen einen
+Kernbank-Kundenstamm) setzt eine Kernbank-API voraus, die dieses Projekt
+nicht hat (Annahme A7). Umgesetzt wurde der in diesem System tatsächlich
+erreichbare Fall: `pfaendung.schuldner_name` fehlt in der Extraktion,
+während Aktenzeichen und Gläubiger vorhanden sind (ohne die beiden ist
+keine sinnvolle Rückfrage möglich — "unser Aktenzeichen, sein
+Aktenzeichen"). Begründung ausführlich in
+`feldmark_pfaendung_datendiskrepanz_schema.sql`.
+
+**Architektonischer Kern-Fix**: `legePfaendungsfallAn()` hat den strukturellen
+Fehler des Ist-Prozesses bisher unbeabsichtigt REPRODUZIERT — fehlende
+Felder führten zu keinem Fallobjekt, also lief keine Frist, also blockierte
+die Klärung faktisch doch (derselbe Fehler, den das Sollkonzept am
+Ist-Prozess kritisiert). Fix: bei "nur Schuldnername fehlt" wird jetzt
+TROTZDEM ein Fallobjekt angelegt (Platzhalter-Schuldner, NOT-NULL-Spalte
+bewusst nicht aufgeweicht), die Frist läuft sofort, die Klärung läuft
+parallel dazu — das ist der eigentliche Kern von "die Klärung darf die
+Frist nicht blockieren".
+
+**Elegante Wiederverwendung entdeckt und genutzt**: Die fristwahrende
+Erklärung (A3, Sollkonzept 3.1) ist exakt die vierte Drittschuldnererklärung-
+Variante, die im P-Konto-Baustein der letzten Nacht bereits im Docstring
+als "hier nicht implementiert, weil aktuell kein erreichbarer Zustand"
+vermerkt war. Statt einer zweiten, parallelen Freigabe-/Versand-Pipeline
+nur für diesen Fall nutzt der Sweep `db.speichereErklaerung()` — dieselbe
+Funktion, dieselbe UI (Freigeben/Versenden), gleiche Vier-Augen-Logik.
+Kein neuer Code fuer Freigabe/Versand noetig.
+
+**Neue Dateien**: `feldmark_pfaendung_datendiskrepanz_schema.sql` (additive
+1:1-Tabelle, gleiches Muster wie die P-Konto-Erweiterung),
+`feldmark_app/server/datendiskrepanz.js` (deterministische Textbausteine:
+Rückfrage, 2× Nachfassung, fristwahrende Erklärung — kein LLM, gleiches
+Prinzip wie `pkonto_drittschuldner.js`),
+`feldmark_app/src/features/.../components/DatendiskrepanzFall.jsx` (UI,
+rendert nichts wenn kein Eintrag existiert - reines Geschwisterelement zu
+PfaendungErweiterung, kein Ersatz).
+
+**Neuer Status-Wert**: `'Klaerung offen - fristwahrend erklaert'` (CHECK-
+Constraint live UND in `feldmark_pfaendung_schema.sql` synchron ergänzt —
+diesmal sofort, nicht erst nach einem Fund im Review wie in der Nacht
+zuvor).
+
+**Sweep-Endpunkt** `POST /api/sweep/datendiskrepanz`: bewusste Abweichung
+vom bestehenden n8n-Fristüberwachungs-Sweep-Muster (der macht alles direkt
+in Postgres-/Code-Nodes in n8n) — hier lebt die Terminerkennung UND die
+Text-Erzeugung im Node-Backend, damit die fristwahrende-Erklärung-Logik
+nicht ein zweites Mal in einem n8n-Code-Node dupliziert werden muss (genau
+das Duplizierungsrisiko, das der Code-Review der Vornacht bei anderen
+Konstanten bereits gefunden hatte). **n8n-Wiring noch NICHT vorgenommen** —
+der Endpunkt ist fertig und getestet, müsste nur taeglich aufgerufen werden
+(ein HTTP-Request-Node im bestehenden Workflow, analog zum 07:00/07:15-
+Schedule-Trigger).
+
+**Getestet** (Node-Skript mit synthetischer Klassifikation statt echtem
+Mistral-Aufruf, da eine reale OCR-Erkennung mit GENAU fehlendem
+Schuldnernamen bei sonst vollständigen Daten nicht zuverlässig provozierbar
+ist): Fallanlage mit Platzhalter ✓, Sweep-Pfade Nachfassung 1/2/fristwahrende
+Erklärung/30-Tage-Schließung je einzeln über künstlich zurückdatierte
+Zeitstempel ✓, Idempotenz (Sweep zweimal hintereinander, keine Doppel-
+Aktion) ✓, UI-Anzeige inkl. Cross-Reference zur wiederverwendeten
+Drittschuldnererklärung ✓, Reaktivierung über die echte UI (Schuldner
+nachtragen, Status korrekt zurück auf "Geprueft") ✓. Alle drei Test-Fälle
+danach komplett gelöscht (Neuanlagen, nicht modifizierte Seed-Daten -
+Löschen statt Zurücksetzen war hier der korrekte "Reset").
+
+**Bewusst nicht gebaut / offen**:
+- n8n-Wiring des Sweep-Endpunkts (siehe oben).
+- Kein Gläubigerverzeichnis (war schon im Sollkonzept als eigener Quick
+  Win Q3 vorgesehen) — Rückfrage-"Kanal" bleibt wie der übrige Versand in
+  diesem Projekt ein Textbaustein-Platzhalter, kein echter E-Mail-Versand.
+- Kein UI-Weg, einen Fall zu finden, der die Datendiskrepanz-Route NICHT
+  genommen hat, weil ihm auch Aktenzeichen oder Gläubiger fehlten (bleibt
+  bewusst in der normalen Sichtprüfung, siehe Scope-Präzisierung oben).
+
 ## Neu fürs Wiedereinsteigen: Methodik-Dokument (2026-08-13/14, zweite Nacht autonomer Arbeit)
 Nutzer bat explizit, mit dem Projekt autonom weiterzuarbeiten (zweite Nacht in Folge,
 `/loop` dynamisch, Check-in 07:45), und fragte nach meiner Einschätzung zur Projektrichtung.

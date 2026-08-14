@@ -655,6 +655,12 @@ p.view-lede {
   border-top: 1px solid var(--line-soft);
 }
 
+.diskrepanz {
+  margin-bottom: 20px;
+  padding-bottom: 18px;
+  border-bottom: 1px dashed var(--line);
+}
+
 .erweiterung__vorschau {
   font-size: 13.5px;
   margin: 4px 0 14px;

@@ -31,6 +31,7 @@ CREATE TABLE feldmark_pfaendung_faelle (
                           CHECK (status IN ('Eingegangen',
                                             'In Bearbeitung',
                                             'Geprueft',
+                                            'Klaerung offen - fristwahrend erklaert',
                                             'Erklaerung freigegeben',
                                             'Erklaerung versandt',
                                             'Abgeschlossen',

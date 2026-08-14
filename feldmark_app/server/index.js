@@ -9,6 +9,14 @@ import { randomUUID } from "node:crypto";
 import { istUnterstuetzterTyp, normalisiereFuerOcr } from "./convert.js";
 import { ocrDokument, klassifiziereUndExtrahiere, bestimmeRouting, PFAENDUNGSBLOCK_TYPEN } from "./mistral.js";
 import { erzeugeDrittschuldnererklaerung } from "./pkonto_drittschuldner.js";
+import {
+  erzeugeNachfassung,
+  erzeugeFristwahrendeErklaerung,
+  NACHFASSUNG_1_TAGE_NACH_RUECKFRAGE,
+  NACHFASSUNG_2_TAGE_NACH_RUECKFRAGE,
+  FRISTWAHREND_SPAETESTENS_TAG,
+  SCHLIESSEN_NACH_TAGEN_OHNE_ANTWORT,
+} from "./datendiskrepanz.js";
 import * as db from "./db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -303,6 +311,105 @@ app.post("/api/faelle/:fallId/erklaerung/versenden", async (req, res) => {
     const ergebnis = await db.bestaetigeVersand(req.params.fallId, versendetVon);
     if (!ergebnis) return res.status(404).json({ fehler: "Fall nicht gefunden oder noch nicht freigegeben." });
     res.json({ erweiterung: ergebnis });
+  } catch (fehler) {
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+// ===================================================================
+// Datendiskrepanz-Workflow (Sollkonzept 3.1, Ast A) - siehe
+// feldmark_pfaendung_datendiskrepanz_schema.sql und datendiskrepanz.js.
+// ===================================================================
+
+app.get("/api/datendiskrepanz", async (req, res) => {
+  try {
+    res.json({ faelle: await db.listeOffeneDatendiskrepanzen() });
+  } catch (fehler) {
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+app.get("/api/faelle/:fallId/datendiskrepanz", async (req, res) => {
+  try {
+    const eintrag = await db.ermittleDatendiskrepanz(req.params.fallId);
+    if (!eintrag) return res.status(404).json({ fehler: "Kein Datendiskrepanz-Eintrag fuer diesen Fall." });
+    res.json({ datendiskrepanz: eintrag });
+  } catch (fehler) {
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+// A4a: der Glaeubiger antwortet mit ausreichenden Angaben - ein Mensch
+// traegt den Schuldnernamen nach, der Fall laeuft normal weiter.
+app.post("/api/faelle/:fallId/datendiskrepanz/reaktivieren", async (req, res) => {
+  try {
+    const { schuldner_name, reaktiviert_von } = req.body;
+    if (!schuldner_name || !reaktiviert_von) {
+      return res.status(400).json({ fehler: "schuldner_name und reaktiviert_von sind erforderlich." });
+    }
+    const ergebnis = await db.reaktiviereDatendiskrepanzFall(req.params.fallId, schuldner_name, reaktiviert_von);
+    if (!ergebnis) return res.status(404).json({ fehler: "Fall nicht gefunden oder bereits geklaert/geschlossen." });
+    res.json({ datendiskrepanz: ergebnis });
+  } catch (fehler) {
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+const MS_PRO_TAG = 86_400_000;
+function tageSeit(datumWert) {
+  if (!datumWert) return null;
+  return Math.floor((Date.now() - new Date(datumWert).getTime()) / MS_PRO_TAG);
+}
+
+/**
+ * Verarbeitet alle faelligen Aktionen ueber alle offenen Datendiskrepanz-
+ * Faelle hinweg (A2 Nachfassungen, A3 fristwahrende Erklaerung, A4b
+ * Schliessung nach 30 Tagen) - ein Aufruf pro Tag, analog zum bestehenden
+ * n8n-Fristueberwachungs-Sweep. Bewusst als eigener REST-Endpunkt statt
+ * direkt in n8n nachgebaut: die fristwahrende Erklaerung nutzt dieselbe
+ * Text-Erzeugung wie die regulaere Drittschuldnererklaerung
+ * (pkonto_drittschuldner.js) - dieselbe Logik zusaetzlich in einem n8n-
+ * Code-Node zu duplizieren wuerde genau das Duplizierungsrisiko schaffen,
+ * das der Code-Review in der vorherigen Nacht bei anderen Konstanten
+ * bereits als Problem markiert hat. n8n ruft diesen Endpunkt taeglich auf
+ * (Wiring noch nicht vorgenommen, siehe KONTEXT.md).
+ *
+ * Reihenfolge der Pruefung ist bewusst: fristwahrende Erklaerung zuerst
+ * (sobald Tag 10 erreicht ist, erledigt sie die eigentliche Fristsicherung
+ * und macht eine noch ausstehende Nachfassung obsolet), danach Schliessung
+ * nach 30 Tagen, erst danach die beiden Nachfassungen.
+ */
+app.post("/api/sweep/datendiskrepanz", async (req, res) => {
+  try {
+    const faelle = await db.holeFaelligeDatendiskrepanzen();
+    const aktionen = [];
+    for (const f of faelle) {
+      const tageSeitZustellung = tageSeit(f.zustelldatum);
+      const tageSeitRueckfrage = tageSeit(f.rueckfrage_gesendet_am);
+
+      if (tageSeitZustellung >= FRISTWAHREND_SPAETESTENS_TAG && !f.fristwahrend_erklaert_am) {
+        const fall = await db.ermittleFallMitErweiterung(f.fall_id);
+        const ergebnis = erzeugeFristwahrendeErklaerung(fall, { rueckfrage_gesendet_am: f.rueckfrage_gesendet_am });
+        await db.speichereErklaerung(f.fall_id, ergebnis.text);
+        await db.markiereFristwahrendErklaert(f.fall_id);
+        aktionen.push({ fall_id: f.fall_id, aktion: "fristwahrende_erklaerung_erzeugt" });
+      } else if (tageSeitRueckfrage >= SCHLIESSEN_NACH_TAGEN_OHNE_ANTWORT) {
+        await db.schliesseDatendiskrepanzUngeklaert(
+          f.fall_id,
+          "Keine ausreichende Antwort des Glaeubigers innerhalb von 30 Tagen - Zuordnung nicht moeglich."
+        );
+        aktionen.push({ fall_id: f.fall_id, aktion: "geschlossen_ungeklaert" });
+      } else if (tageSeitRueckfrage >= NACHFASSUNG_2_TAGE_NACH_RUECKFRAGE && !f.nachfassung_2_gesendet_am) {
+        const text = erzeugeNachfassung(f, f, 2);
+        await db.protokolliereNachfassung(f.fall_id, 2, text);
+        aktionen.push({ fall_id: f.fall_id, aktion: "nachfassung_2_gesendet" });
+      } else if (tageSeitRueckfrage >= NACHFASSUNG_1_TAGE_NACH_RUECKFRAGE && !f.nachfassung_1_gesendet_am) {
+        const text = erzeugeNachfassung(f, f, 1);
+        await db.protokolliereNachfassung(f.fall_id, 1, text);
+        aktionen.push({ fall_id: f.fall_id, aktion: "nachfassung_1_gesendet" });
+      }
+    }
+    res.json({ geprueft: faelle.length, aktionen });
   } catch (fehler) {
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }

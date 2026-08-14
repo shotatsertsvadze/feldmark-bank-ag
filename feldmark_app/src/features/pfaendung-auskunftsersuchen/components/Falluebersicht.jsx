@@ -5,6 +5,7 @@ import { DOKUMENTTYP_LABEL } from "../dokumenttypen.js";
 import Fristleiste from "./Fristleiste.jsx";
 import Stempel from "./Stempel.jsx";
 import PfaendungErweiterung from "./PfaendungErweiterung.jsx";
+import DatendiskrepanzFall from "./DatendiskrepanzFall.jsx";
 
 const FILTER = [
   { id: "alle", label: "Alle" },
@@ -129,6 +130,7 @@ export default function Falluebersicht({ reloadSignal }) {
                   </div>
                   {istAufgeklappt && (
                     <div className="fall-zeile__erweiterung">
+                      <DatendiskrepanzFall fallId={f.fall_id} onFallGeaendert={() => setInternerReload((n) => n + 1)} />
                       <PfaendungErweiterung fallId={f.fall_id} onFallGeaendert={() => setInternerReload((n) => n + 1)} />
                     </div>
                   )}

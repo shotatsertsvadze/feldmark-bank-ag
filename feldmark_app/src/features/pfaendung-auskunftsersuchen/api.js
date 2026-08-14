@@ -84,3 +84,23 @@ export async function erklaerungVersenden(fallId, versendetVon) {
     )
   ).erweiterung;
 }
+
+// Gibt null zurueck statt zu werfen, wenn kein Datendiskrepanz-Eintrag
+// existiert (404 = Normalfall fuer die meisten Faelle, kein Fehler).
+export async function datendiskrepanzLaden(fallId) {
+  const antwort = await fetch(`/api/faelle/${fallId}/datendiskrepanz`);
+  if (antwort.status === 404) return null;
+  return (await json(antwort)).datendiskrepanz;
+}
+
+export async function datendiskrepanzReaktivieren(fallId, schuldnerName, reaktiviertVon) {
+  return (
+    await json(
+      await fetch(`/api/faelle/${fallId}/datendiskrepanz/reaktivieren`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ schuldner_name: schuldnerName, reaktiviert_von: reaktiviertVon }),
+      })
+    )
+  ).datendiskrepanz;
+}

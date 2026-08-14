@@ -12,6 +12,7 @@
  */
 
 import pg from "pg";
+import { erzeugeRueckfrage } from "./datendiskrepanz.js";
 
 const { Pool } = pg;
 let pool;
@@ -84,12 +85,27 @@ export async function findeFallZuAktenzeichen(aktenzeichen) {
   return null;
 }
 
+// Platzhalter fuer feldmark_pfaendung_faelle.schuldner (NOT NULL), solange
+// der Datendiskrepanz-Workflow noch laeuft - siehe legePfaendungsfallAn().
+const SCHULDNER_PLATZHALTER = "(nicht zugeordnet - Rückfrage an Gläubiger läuft)";
+
 /**
  * Legt einen Pfaendungsfall an (pfaendungsschreiben, einziehungsverfuegung,
  * ueberweisungsverfuegung - alle drei teilen sich die Tabelle, siehe
  * PFAENDUNGSBLOCK_TYPEN in mistral.js). Legt NICHT an, wenn Pflichtfelder
  * fehlen, egal wie hoch die Konfidenz war - lieber Sichtpruefung als ein
  * unvollstaendiger Fall.
+ *
+ * Ausnahme (Sollkonzept 3.1, Ast A "Datendiskrepanz"): fehlt EINZIG
+ * pfaendung.schuldner_name, wird der Fall trotzdem angelegt (mit
+ * Platzhalter-Schuldner) und der Datendiskrepanz-Workflow angestossen,
+ * statt in die Sichtpruefung zu gehen - das ist der Kern des Sollkonzept-
+ * Befunds "die Klaerung darf die Frist nicht blockieren". Fehlen dagegen
+ * Aktenzeichen oder Glaeubiger (oder mehr als nur der Schuldnername),
+ * bleibt es bei der Sichtpruefung, weil ohne diese beiden Angaben keine
+ * sinnvolle Rueckfrage moeglich ist ("unser Aktenzeichen, sein
+ * Aktenzeichen"). Siehe feldmark_pfaendung_datendiskrepanz_schema.sql fuer
+ * die vollstaendige Begruendung dieser Scope-Praezisierung.
  */
 export async function legePfaendungsfallAn(klassifikation, eingang) {
   const { kopf, pfaendung } = klassifikation;
@@ -100,7 +116,9 @@ export async function legePfaendungsfallAn(klassifikation, eingang) {
   if (!eingang.zustelldatum) fehlend.push("zustelldatum (Upload-Metadaten)");
   if (!eingang.zustellkanal) fehlend.push("zustellkanal (Upload-Metadaten)");
   if (!eingang.bearbeiter_email) fehlend.push("bearbeiter_email (Upload-Metadaten)");
-  if (fehlend.length) {
+
+  const nurSchuldnerFehlt = fehlend.length === 1 && fehlend[0] === "pfaendung.schuldner_name";
+  if (fehlend.length && !nurSchuldnerFehlt) {
     return { angelegt: false, grund: `Pflichtfeld(er) fehlen: ${fehlend.join(", ")}` };
   }
 
@@ -117,7 +135,7 @@ export async function legePfaendungsfallAn(klassifikation, eingang) {
       fallId,
       kopf.aktenzeichen,
       pfaendung.glaeubiger_name,
-      pfaendung.schuldner_name,
+      nurSchuldnerFehlt ? SCHULDNER_PLATZHALTER : pfaendung.schuldner_name,
       eingang.zustelldatum,
       eingang.zustellkanal,
       eingang.bearbeiter_email,
@@ -136,7 +154,16 @@ export async function legePfaendungsfallAn(klassifikation, eingang) {
   );
   await protokolliere("feldmark_pfaendung_protokoll", fallId, "fall_angelegt", eingang.zustelldatum);
 
-  return { angelegt: true, fall_id: fallId, tabelle: "feldmark_pfaendung_faelle" };
+  if (nurSchuldnerFehlt) {
+    const rueckfrageText = erzeugeRueckfrage({ aktenzeichen: kopf.aktenzeichen, fall_id: fallId });
+    await pool.query(`INSERT INTO feldmark_pfaendung_datendiskrepanz (fall_id, rueckfrage_text) VALUES ($1, $2)`, [
+      fallId,
+      rueckfrageText,
+    ]);
+    await protokolliere("feldmark_pfaendung_protokoll", fallId, "datendiskrepanz_rueckfrage_gesendet", eingang.zustelldatum);
+  }
+
+  return { angelegt: true, fall_id: fallId, tabelle: "feldmark_pfaendung_faelle", datendiskrepanz: nurSchuldnerFehlt };
 }
 
 /**
@@ -430,4 +457,135 @@ export async function bestaetigeVersand(fallId, versendetVon) {
     [fallId]
   );
   return rows[0];
+}
+
+// ===================================================================
+// Datendiskrepanz-Workflow (Sollkonzept 3.1, Ast A) - siehe
+// feldmark_pfaendung_datendiskrepanz_schema.sql und datendiskrepanz.js
+// fuer Begruendung und Textbausteine.
+// ===================================================================
+
+/**
+ * Alle noch offenen Datendiskrepanz-Faelle (weder geklaert noch
+ * geschlossen), fuer die Fallübersicht und den Sweep gemeinsam nutzbar.
+ */
+export async function listeOffeneDatendiskrepanzen() {
+  const { rows } = await getPool().query(
+    `SELECT f.fall_id, f.aktenzeichen, f.glaeubiger, f.status,
+            to_char(f.zustelldatum, 'YYYY-MM-DD') AS zustelldatum,
+            d.rueckfrage_text, d.rueckfrage_gesendet_am,
+            d.nachfassung_1_gesendet_am, d.nachfassung_2_gesendet_am,
+            d.fristwahrend_erklaert_am
+     FROM   feldmark_pfaendung_datendiskrepanz d
+     JOIN   feldmark_pfaendung_faelle f ON f.fall_id = d.fall_id
+     WHERE  d.geklaert_am IS NULL AND d.geschlossen_am IS NULL
+     ORDER  BY d.rueckfrage_gesendet_am`
+  );
+  return rows;
+}
+
+/** Einzelner Datendiskrepanz-Fall inkl. Falldaten, fuer die Detailansicht. */
+export async function ermittleDatendiskrepanz(fallId) {
+  const { rows } = await getPool().query(
+    `SELECT f.fall_id, f.aktenzeichen, f.glaeubiger, f.schuldner, f.status,
+            to_char(f.zustelldatum, 'YYYY-MM-DD') AS zustelldatum,
+            d.rueckfrage_text, d.rueckfrage_gesendet_am,
+            d.nachfassung_1_text, d.nachfassung_1_gesendet_am,
+            d.nachfassung_2_text, d.nachfassung_2_gesendet_am,
+            d.fristwahrend_erklaert_am,
+            d.geklaert_am, d.geklaert_schuldner_name, d.geklaert_von,
+            d.geschlossen_am, d.geschlossen_grund
+     FROM   feldmark_pfaendung_datendiskrepanz d
+     JOIN   feldmark_pfaendung_faelle f ON f.fall_id = d.fall_id
+     WHERE  d.fall_id = $1`,
+    [fallId]
+  );
+  return rows[0] ?? null;
+}
+
+/** A2: eine der zwei automatischen Nachfassungen protokollieren. */
+export async function protokolliereNachfassung(fallId, nummer, text) {
+  const spalteText = nummer === 1 ? "nachfassung_1_text" : "nachfassung_2_text";
+  const spalteAm = nummer === 1 ? "nachfassung_1_gesendet_am" : "nachfassung_2_gesendet_am";
+  await getPool().query(
+    `UPDATE feldmark_pfaendung_datendiskrepanz SET ${spalteText} = $2, ${spalteAm} = now() WHERE fall_id = $1`,
+    [fallId, text]
+  );
+}
+
+/**
+ * A3: markiert den Ausloese-Zeitpunkt der fristwahrenden Erklaerung
+ * (Idempotenz-Sperre fuer den Sweep) und setzt den Fall-Status. Der
+ * Erklaerungstext selbst wird ueber speichereErklaerung() in
+ * feldmark_pfaendung_erweiterung geschrieben - siehe Aufrufer im Sweep.
+ */
+export async function markiereFristwahrendErklaert(fallId) {
+  const pool = getPool();
+  await pool.query(`UPDATE feldmark_pfaendung_datendiskrepanz SET fristwahrend_erklaert_am = now() WHERE fall_id = $1`, [
+    fallId,
+  ]);
+  await pool.query(
+    `UPDATE feldmark_pfaendung_faelle SET status = 'Klaerung offen - fristwahrend erklaert', letzte_aktion_am = now() WHERE fall_id = $1`,
+    [fallId]
+  );
+}
+
+/**
+ * A4a: Antwort des Glaeubigers trifft ein (auch nach der fristwahrenden
+ * Erklaerung noch moeglich) - Fall wird reaktiviert, echter Schuldnername
+ * nachgetragen, Status auf 'Geprueft' zurueckgesetzt (bewusst derselbe
+ * Zielstatus wie beim Reset in speichereErklaerung() - "wieder normal in
+ * Bearbeitung", keine dritte Status-Variante nur fuer diesen Uebergang).
+ */
+export async function reaktiviereDatendiskrepanzFall(fallId, schuldnerName, von) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `UPDATE feldmark_pfaendung_datendiskrepanz
+     SET    geklaert_am = now(), geklaert_schuldner_name = $2, geklaert_von = $3
+     WHERE  fall_id = $1 AND geklaert_am IS NULL AND geschlossen_am IS NULL
+     RETURNING *`,
+    [fallId, schuldnerName, von]
+  );
+  if (!rows[0]) return null;
+  await pool.query(`UPDATE feldmark_pfaendung_faelle SET schuldner = $2, status = 'Geprueft', letzte_aktion_am = now() WHERE fall_id = $1`, [
+    fallId,
+    schuldnerName,
+  ]);
+  return rows[0];
+}
+
+/** A4b: 30 Tage ohne Antwort - Fall wird mit Vermerk geschlossen. */
+export async function schliesseDatendiskrepanzUngeklaert(fallId, grund) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `UPDATE feldmark_pfaendung_datendiskrepanz
+     SET    geschlossen_am = now(), geschlossen_grund = $2
+     WHERE  fall_id = $1 AND geklaert_am IS NULL AND geschlossen_am IS NULL
+     RETURNING *`,
+    [fallId, grund]
+  );
+  if (!rows[0]) return null;
+  await pool.query(`UPDATE feldmark_pfaendung_faelle SET status = 'Abgeschlossen', letzte_aktion_am = now() WHERE fall_id = $1`, [
+    fallId,
+  ]);
+  return rows[0];
+}
+
+/**
+ * Alle noch offenen Datendiskrepanz-Faelle mit den Zeitstempeln, die der
+ * Sweep fuer die Tag-3/6/10/30-Entscheidung braucht. Getrennt von
+ * listeOffeneDatendiskrepanzen() nur der Lesbarkeit halber - gleiche Query,
+ * anderer Verwendungszweck.
+ */
+export async function holeFaelligeDatendiskrepanzen() {
+  const { rows } = await getPool().query(
+    `SELECT f.fall_id, f.aktenzeichen,
+            to_char(f.zustelldatum, 'YYYY-MM-DD') AS zustelldatum,
+            d.rueckfrage_gesendet_am, d.nachfassung_1_gesendet_am,
+            d.nachfassung_2_gesendet_am, d.fristwahrend_erklaert_am
+     FROM   feldmark_pfaendung_datendiskrepanz d
+     JOIN   feldmark_pfaendung_faelle f ON f.fall_id = d.fall_id
+     WHERE  d.geklaert_am IS NULL AND d.geschlossen_am IS NULL`
+  );
+  return rows;
 }
