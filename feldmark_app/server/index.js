@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { istUnterstuetzterTyp, normalisiereFuerOcr } from "./convert.js";
 import { ocrDokument, klassifiziereUndExtrahiere, bestimmeRouting, PFAENDUNGSBLOCK_TYPEN } from "./mistral.js";
 import { erzeugeDrittschuldnererklaerung } from "./pkonto_drittschuldner.js";
+import { erzeugeAuskunftsersuchenAntwort } from "./auskunftsersuchen_antwort.js";
 import {
   erzeugeNachfassung,
   erzeugeFristwahrendeErklaerung,
@@ -348,6 +349,140 @@ app.post("/api/faelle/:fallId/erklaerung/versenden", async (req, res) => {
     res.json({ erweiterung: ergebnis });
   } catch (fehler) {
     console.error(`[POST /api/faelle/${req.params.fallId}/erklaerung/versenden]`, fehler);
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+// ===================================================================
+// Auskunftsersuchen-Erweiterung, Ast E (Sollkonzept 3.5) - Compliance-
+// Einbindung, strukturierte Antwort, bedingte Kontosperre. Routen-Struktur
+// bewusst 1:1 analog zum Pfaendungsblock oben.
+// ===================================================================
+
+app.get("/api/faelle/:fallId/auskunftsersuchen-erweiterung", async (req, res) => {
+  try {
+    const fall = await db.ermittleAuskunftsersuchenMitErweiterung(req.params.fallId);
+    if (!fall) return res.status(404).json({ fehler: "Fall nicht gefunden." });
+    res.json({ fall });
+  } catch (fehler) {
+    console.error(`[GET /api/faelle/${req.params.fallId}/auskunftsersuchen-erweiterung]`, fehler);
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+// E3: Rechtsgrundlagenpruefung - welche angefragten Punkte werden
+// freigegeben, plus die Antwortwerte dazu (keine Kernbank-API angebunden,
+// gleiche Annahme A7 wie beim P-Konto-Ergaenzungskonzept).
+app.put("/api/faelle/:fallId/auskunftsersuchen-erweiterung", async (req, res) => {
+  try {
+    const { freizugebende_punkte, rechtsgrundlage_geprueft_von, antwort_werte } = req.body;
+    const aktualisiert = await db.aktualisiereAuskunftsersuchenErweiterung(req.params.fallId, {
+      freizugebendePunkte: Array.isArray(freizugebende_punkte) ? freizugebende_punkte : null,
+      rechtsgrundlageGeprueftVon: rechtsgrundlage_geprueft_von ?? null,
+      antwortWerte: antwort_werte && typeof antwort_werte === "object" ? antwort_werte : null,
+    });
+    if (!aktualisiert) return res.status(404).json({ fehler: "Fall nicht gefunden." });
+    res.json({ erweiterung: aktualisiert });
+  } catch (fehler) {
+    console.error(`[PUT /api/faelle/${req.params.fallId}/auskunftsersuchen-erweiterung]`, fehler);
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+app.post("/api/faelle/:fallId/antwort", async (req, res) => {
+  try {
+    const fall = await db.ermittleAuskunftsersuchenMitErweiterung(req.params.fallId);
+    if (!fall) return res.status(404).json({ fehler: "Fall nicht gefunden." });
+
+    const ergebnis = erzeugeAuskunftsersuchenAntwort(fall, fall);
+    if (!ergebnis.ok) return res.status(422).json({ fehler: ergebnis.grund });
+
+    await db.speichereAuskunftsersuchenAntwort(fall.fall_id, ergebnis.text);
+    res.json({ antwort_text: ergebnis.text });
+  } catch (fehler) {
+    console.error(`[POST /api/faelle/${req.params.fallId}/antwort]`, fehler);
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+// Weiche Vier-Augen-Pruefung wie bei der Drittschuldnererklaerung: kein
+// echtes Auth-System vorhanden, daher Bestaetigungsschritt statt hartem
+// Blockieren, serverseitig geprueft. Bezugsperson ist hier
+// rechtsgrundlage_geprueft_von (E3, wer die Freigabepunkte festgelegt hat),
+// nicht guthaben_erfasst_von - der inhaltliche Vorlaeuferschritt vor der
+// Freigabe.
+app.post("/api/faelle/:fallId/antwort/freigeben", async (req, res) => {
+  try {
+    const freigegebenVon = req.body.freigegeben_von;
+    const vierAugenBestaetigt = req.body.vier_augen_bestaetigt === true;
+    if (!freigegebenVon) return res.status(400).json({ fehler: "freigegeben_von fehlt." });
+
+    const fall = await db.ermittleAuskunftsersuchenMitErweiterung(req.params.fallId);
+    if (!fall) return res.status(404).json({ fehler: "Fall nicht gefunden." });
+
+    const pruefendeUnbekannt = !fall.rechtsgrundlage_geprueft_von;
+    const gleichePerson =
+      !pruefendeUnbekannt &&
+      fall.rechtsgrundlage_geprueft_von.trim().toLowerCase() === freigegebenVon.trim().toLowerCase();
+    const brauchtBestaetigung = pruefendeUnbekannt || gleichePerson;
+
+    if (brauchtBestaetigung && !vierAugenBestaetigt) {
+      return res.status(409).json({
+        fehler: pruefendeUnbekannt
+          ? `Rechtsgrundlagenpruefung wurde ohne "Geprueft von"-Angabe gespeichert - Vier-Augen-Prinzip kann nicht geprueft werden.`
+          : `"${freigegebenVon}" hat auch zuletzt die Rechtsgrundlage geprueft - Vier-Augen-Prinzip nicht eingehalten.`,
+        vier_augen_warnung: true,
+      });
+    }
+
+    const ergebnis = await db.gibAntwortFrei(req.params.fallId, freigegebenVon);
+    if (!ergebnis) return res.status(404).json({ fehler: "Fall nicht gefunden oder noch keine Antwort erzeugt." });
+    if (brauchtBestaetigung) {
+      await db.protokolliereVierAugenAntwortUebersteuert(req.params.fallId, fall.eingangsdatum);
+    }
+    res.json({ erweiterung: ergebnis });
+  } catch (fehler) {
+    console.error(`[POST /api/faelle/${req.params.fallId}/antwort/freigeben]`, fehler);
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+app.post("/api/faelle/:fallId/antwort/versenden", async (req, res) => {
+  try {
+    const versendetVon = req.body.versendet_von;
+    if (!versendetVon) return res.status(400).json({ fehler: "versendet_von fehlt." });
+    const ergebnis = await db.bestaetigeAntwortVersand(req.params.fallId, versendetVon);
+    if (!ergebnis) return res.status(404).json({ fehler: "Fall nicht gefunden oder noch nicht freigegeben." });
+    res.json({ erweiterung: ergebnis });
+  } catch (fehler) {
+    console.error(`[POST /api/faelle/${req.params.fallId}/antwort/versenden]`, fehler);
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+// E5: dokumentiert, ob eine Kontosperre gerechtfertigt ist. Per Sollkonzept
+// 2.5/E5 NUR bei eigener Rechtsgrundlage (Beschlagnahme/Arrest) - ein
+// reines Auskunftsersuchen darf hier nicht pauschal "true" setzen. Loest
+// keine echte Sperre aus (keine Kernbank-Anbindung), protokolliert nur die
+// getroffene Entscheidung.
+app.post("/api/faelle/:fallId/sperre-entscheidung", async (req, res) => {
+  try {
+    const { rechtsgrundlage_vorhanden, begruendung, entschieden_von } = req.body;
+    if (typeof rechtsgrundlage_vorhanden !== "boolean" || !entschieden_von) {
+      return res.status(400).json({ fehler: "rechtsgrundlage_vorhanden (boolean) und entschieden_von sind erforderlich." });
+    }
+    if (rechtsgrundlage_vorhanden && !begruendung?.trim()) {
+      return res.status(400).json({ fehler: "Bei rechtsgrundlage_vorhanden=true ist eine Begruendung erforderlich." });
+    }
+    const ergebnis = await db.entscheideSperre(req.params.fallId, {
+      rechtsgrundlageVorhanden: rechtsgrundlage_vorhanden,
+      begruendung: begruendung ?? null,
+      entschiedenVon: entschieden_von,
+    });
+    if (!ergebnis) return res.status(404).json({ fehler: "Fall nicht gefunden." });
+    res.json({ erweiterung: ergebnis });
+  } catch (fehler) {
+    console.error(`[POST /api/faelle/${req.params.fallId}/sperre-entscheidung]`, fehler);
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }
 });

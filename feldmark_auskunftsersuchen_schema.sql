@@ -39,6 +39,7 @@ CREATE TABLE feldmark.auskunftsersuchen_faelle (
                                   CHECK (status IN ('Eingegangen',
                                                     'In Bearbeitung',
                                                     'Geprueft',
+                                                    'Antwort freigegeben',
                                                     'Antwort versandt',
                                                     'Abgeschlossen',
                                                     'Abgeschlossen mit Fristversaeumnis')),

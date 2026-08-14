@@ -11,7 +11,13 @@ const datumUhrzeit = (iso) => new Date(iso).toLocaleString("de-DE", { dateStyle:
  * -auskunftsersuchen_protokoll) existierten schon als KPI-Basis, wurden aber
  * nirgends angezeigt - dieser Verlauf macht sie erstmals sichtbar.
  */
-export default function Fallverlauf({ fallId }) {
+// reloadSignal ist optional: Fallverlauf wird als Geschwister-Komponente
+// gerendert (nicht als Kind von PfaendungErweiterung/AuskunftsersuchenErweiterung),
+// bekommt also von deren Aktionen (Freigabe, Versand, Sperr-Entscheidung) nichts
+// automatisch mit - fallId allein aendert sich bei sowas nicht, der Effekt liefe
+// also nie erneut. Falluebersicht.jsx reicht dafuer internerReload durch, das
+// bei jedem onFallGeaendert()-Aufruf hochgezaehlt wird.
+export default function Fallverlauf({ fallId, reloadSignal }) {
   const [eintraege, setEintraege] = useState(null);
   const [fehler, setFehler] = useState(null);
 
@@ -25,7 +31,8 @@ export default function Fallverlauf({ fallId }) {
     return () => {
       abgebrochen = true;
     };
-  }, [fallId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fallId, reloadSignal]);
 
   if (fehler) return <p className="fehlerbanner">{fehler}</p>;
   if (eintraege === null) return <p className="ladeindikator">Verlauf wird geladen …</p>;

@@ -5,6 +5,7 @@ import { DOKUMENTTYP_LABEL } from "../dokumenttypen.js";
 import Fristleiste from "./Fristleiste.jsx";
 import Stempel from "./Stempel.jsx";
 import PfaendungErweiterung from "./PfaendungErweiterung.jsx";
+import AuskunftsersuchenErweiterung from "./AuskunftsersuchenErweiterung.jsx";
 import DatendiskrepanzFall from "./DatendiskrepanzFall.jsx";
 import Fallverlauf from "./Fallverlauf.jsx";
 import Aktivitaetsfeed from "./Aktivitaetsfeed.jsx";
@@ -121,7 +122,10 @@ export default function Falluebersicht({ reloadSignal }) {
                   >
                     <span className="fall-zeile__id">{f.fall_id}</span>
                     <div className="fall-zeile__parteien">
-                      <div className="fall-zeile__typ">{DOKUMENTTYP_LABEL[f.dokumenttyp] || f.dokumenttyp}</div>
+                      <div className="fall-zeile__typ">
+                        {DOKUMENTTYP_LABEL[f.dokumenttyp] || f.dokumenttyp}
+                        {f.vertraulich && <span className="badge badge--oxblood"> Vertraulich</span>}
+                      </div>
                       <div className="fall-zeile__namen">
                         {f.partei_a} → {f.partei_b}
                       </div>
@@ -135,13 +139,17 @@ export default function Falluebersicht({ reloadSignal }) {
                   </div>
                   {istAufgeklappt && (
                     <div className="fall-zeile__erweiterung">
-                      {istPfaendungsblock && (
+                      {istPfaendungsblock ? (
                         <>
                           <DatendiskrepanzFall fallId={f.fall_id} onFallGeaendert={() => setInternerReload((n) => n + 1)} />
                           <PfaendungErweiterung fallId={f.fall_id} onFallGeaendert={() => setInternerReload((n) => n + 1)} />
                         </>
+                      ) : (
+                        f.dokumenttyp === "auskunftsersuchen" && (
+                          <AuskunftsersuchenErweiterung fallId={f.fall_id} onFallGeaendert={() => setInternerReload((n) => n + 1)} />
+                        )
                       )}
-                      <Fallverlauf fallId={f.fall_id} />
+                      <Fallverlauf fallId={f.fall_id} reloadSignal={internerReload} />
                     </div>
                   )}
                 </div>

@@ -21,6 +21,10 @@ export const EREIGNIS_LABEL = {
   vier_augen_erforderlich: { label: "Vier-Augen-Prüfung erforderlich", farbe: "ochre" },
   vier_augen_erklaerung_uebersteuert: { label: "Vier-Augen-Warnung übersteuert", farbe: "oxblood" },
   datendiskrepanz_rueckfrage_gesendet: { label: "Rückfrage wegen Datendiskrepanz gesendet", farbe: "ochre" },
+  compliance_informiert: { label: "Compliance informiert", farbe: "slate" },
+  vier_augen_antwort_uebersteuert: { label: "Vier-Augen-Warnung übersteuert", farbe: "oxblood" },
+  kontosperre_ausgeloest: { label: "Kontosperre-Entscheidung: Sperre ausgelöst", farbe: "oxblood" },
+  kontosperre_nicht_ausgeloest: { label: "Kontosperre-Entscheidung: keine Sperre", farbe: "moss" },
 };
 
 /** Stempel-Inhalt aus einem Verarbeitungsergebnis von POST /api/klassifizieren. */

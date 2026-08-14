@@ -213,7 +213,20 @@ export async function legeAuskunftsersuchenFallAn(klassifikation, eingang) {
       eingang.vorgesetzte_email ?? null,
     ]
   );
+  // kopf.rechtsgrundlage wurde bisher an dieser Stelle verworfen - jetzt in
+  // der Erweiterungstabelle mitgefuehrt, weil die Antwort sie zitieren muss
+  // (siehe auskunftsersuchen_antwort.js). compliance_informiert_am wird
+  // sofort gesetzt (E2 "automatisiert, sofort" - Sollkonzept 3.5), nicht
+  // erst bei einer spaeteren Mitarbeiteraktion wie bei der P-Konto-
+  // Benachrichtigung, wo das erst beim Erfassen des Guthabens ausgeloest
+  // wird - hier gibt es keine vergleichbare Ambiguitaet zu vermeiden.
+  await pool.query(
+    `INSERT INTO feldmark.auskunftsersuchen_erweiterung (fall_id, rechtsgrundlage, compliance_informiert_am)
+     VALUES ($1, $2, now())`,
+    [fallId, kopf.rechtsgrundlage || []]
+  );
   await protokolliere("feldmark.auskunftsersuchen_protokoll", fallId, "fall_angelegt", eingang.zustelldatum);
+  await protokolliere("feldmark.auskunftsersuchen_protokoll", fallId, "compliance_informiert", eingang.zustelldatum);
 
   return { angelegt: true, fall_id: fallId, tabelle: "feldmark.auskunftsersuchen_faelle" };
 }
@@ -233,6 +246,14 @@ export async function protokolliereVierAugen(tabelle, fallId, eingangsdatumIso) 
  * hartes Blockieren moeglich - siehe KONTEXT.md. */
 export async function protokolliereVierAugenErklaerungUebersteuert(fallId, eingangsdatumIso) {
   await protokolliere("feldmark.pfaendung_protokoll", fallId, "vier_augen_erklaerung_uebersteuert", eingangsdatumIso);
+}
+
+/** Gleiches Muster wie protokolliereVierAugenErklaerungUebersteuert(), nur
+ * fuer die Auskunftsersuchen-Antwort (Ast E, E4). Eigene Funktion statt
+ * Wiederverwendung ueber einen Tabellen-Parameter, um den bereits
+ * getesteten Pfaendungs-Pfad nicht anzufassen. */
+export async function protokolliereVierAugenAntwortUebersteuert(fallId, eingangsdatumIso) {
+  await protokolliere("feldmark.auskunftsersuchen_protokoll", fallId, "vier_augen_antwort_uebersteuert", eingangsdatumIso);
 }
 
 /** Ereignis "Erinnerung erhalten" gegen einen bereits bestehenden Fall -
@@ -289,7 +310,7 @@ export async function listeOffeneFaelle() {
   const auskunftsersuchen = await pool.query(
     `SELECT fall_id, aktenzeichen, ausstellende_behoerde AS partei_a, betroffene_person_name AS partei_b,
             to_char(eingangsdatum, 'YYYY-MM-DD') AS eingangsdatum, antwortfrist_tage, zustellkanal,
-            status, erinnerungen_gesendet, 'auskunftsersuchen' AS dokumenttyp
+            status, erinnerungen_gesendet, vertraulich, 'auskunftsersuchen' AS dokumenttyp
      FROM   feldmark.auskunftsersuchen_faelle
      WHERE  status NOT IN ('Antwort versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis')`
   );
@@ -455,6 +476,157 @@ export async function bestaetigeVersand(fallId, versendetVon) {
   await pool.query(
     `UPDATE feldmark.pfaendung_faelle SET status = 'Erklaerung versandt', letzte_aktion_am = now() WHERE fall_id = $1`,
     [fallId]
+  );
+  return rows[0];
+}
+
+// ===================================================================
+// Auskunftsersuchen-Erweiterung, Ast E (Sollkonzept 3.5) - Compliance-
+// Einbindung, strukturierte Antwort, bedingte Kontosperre. Siehe
+// feldmark_auskunftsersuchen_erweiterung_schema.sql und
+// auskunftsersuchen_antwort.js. Struktur bewusst 1:1 analog zum
+// Pfaendungs-Erweiterungsblock oben (ermittleFallMitErweiterung,
+// speichereErklaerung, gibErklaerungFrei, bestaetigeVersand).
+// ===================================================================
+
+/**
+ * Auskunftsersuchen-Fall inkl. Ast-E-Erweiterung, fuer die Fall-
+ * Detailansicht. Gibt null zurueck, wenn der Fall nicht existiert.
+ */
+export async function ermittleAuskunftsersuchenMitErweiterung(fallId) {
+  const { rows } = await getPool().query(
+    `SELECT f.fall_id, f.aktenzeichen, f.ausstellende_behoerde, f.betroffene_person_name,
+            to_char(f.betroffene_person_geburtsdatum, 'YYYY-MM-DD') AS betroffene_person_geburtsdatum,
+            f.tatvorwurf, f.angefragte_punkte, f.vertraulich,
+            to_char(f.eingangsdatum, 'YYYY-MM-DD') AS eingangsdatum, f.status,
+            e.rechtsgrundlage, e.compliance_informiert_am,
+            e.freizugebende_punkte, e.rechtsgrundlage_geprueft_von, e.rechtsgrundlage_geprueft_am,
+            e.antwort_werte, e.antwort_text, e.antwort_erzeugt_am,
+            e.antwort_freigegeben_von, e.antwort_freigegeben_am,
+            e.antwort_versendet_von, e.antwort_versendet_am,
+            e.sperre_rechtsgrundlage_vorhanden, e.sperre_begruendung,
+            e.sperre_entschieden_von, e.sperre_entschieden_am
+     FROM   feldmark.auskunftsersuchen_faelle f
+     JOIN   feldmark.auskunftsersuchen_erweiterung e ON e.fall_id = f.fall_id
+     WHERE  f.fall_id = $1`,
+    [fallId]
+  );
+  return rows[0] ?? null;
+}
+
+/** E3: Rechtsgrundlagenpruefung - welche der angefragten Punkte werden
+ * freigegeben, plus die dazugehoerigen Antwortwerte. Bewusst ein einzelner
+ * PUT-Endpunkt fuer beides (analog zu aktualisiereErweiterung()), da beide
+ * im selben Formular erfasst werden. */
+export async function aktualisiereAuskunftsersuchenErweiterung(
+  fallId,
+  { freizugebendePunkte, rechtsgrundlageGeprueftVon, antwortWerte }
+) {
+  const { rows } = await getPool().query(
+    `UPDATE feldmark.auskunftsersuchen_erweiterung
+     SET    freizugebende_punkte = COALESCE($2, freizugebende_punkte),
+            rechtsgrundlage_geprueft_von = CASE WHEN $2 IS NOT NULL THEN $3 ELSE rechtsgrundlage_geprueft_von END,
+            rechtsgrundlage_geprueft_am = CASE WHEN $2 IS NOT NULL THEN now() ELSE rechtsgrundlage_geprueft_am END,
+            antwort_werte = COALESCE($4, antwort_werte)
+     WHERE  fall_id = $1
+     RETURNING *`,
+    [fallId, freizugebendePunkte ?? null, rechtsgrundlageGeprueftVon ?? null, antwortWerte ? JSON.stringify(antwortWerte) : null]
+  );
+  return rows[0] ?? null;
+}
+
+/** Speichert den erzeugten Antworttext (noch nicht freigegeben). Setzt
+ * einen evtl. vorhandenen Freigabe-/Versand-Nachweis einer FRUEHEREN
+ * Antwort zurueck und den Fall-Status auf 'Geprueft', falls er bereits bei
+ * 'Antwort freigegeben'/'Antwort versandt' stand - identische Begruendung
+ * wie bei speichereErklaerung() (siehe dortiger Kommentar). */
+export async function speichereAuskunftsersuchenAntwort(fallId, text) {
+  const pool = getPool();
+  await pool.query(
+    `UPDATE feldmark.auskunftsersuchen_erweiterung
+     SET    antwort_text = $2, antwort_erzeugt_am = now(),
+            antwort_freigegeben_von = NULL, antwort_freigegeben_am = NULL,
+            antwort_versendet_von = NULL, antwort_versendet_am = NULL
+     WHERE  fall_id = $1`,
+    [fallId, text]
+  );
+  await pool.query(
+    `UPDATE feldmark.auskunftsersuchen_faelle
+     SET    status = 'Geprueft', letzte_aktion_am = now()
+     WHERE  fall_id = $1 AND status IN ('Antwort freigegeben', 'Antwort versandt')`,
+    [fallId]
+  );
+}
+
+/** E4: Freigabe der Antwort (z.B. durch Compliance). Setzt nur den
+ * Zwischenstatus 'Antwort freigegeben' - gleiche Freigabe-/Versand-
+ * Trennung wie bei gibErklaerungFrei(). */
+export async function gibAntwortFrei(fallId, freigegebenVon) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `UPDATE feldmark.auskunftsersuchen_erweiterung
+     SET    antwort_freigegeben_von = $2, antwort_freigegeben_am = now()
+     WHERE  fall_id = $1 AND antwort_text IS NOT NULL
+     RETURNING *`,
+    [fallId, freigegebenVon]
+  );
+  if (!rows[0]) return null;
+  await pool.query(
+    `UPDATE feldmark.auskunftsersuchen_faelle SET status = 'Antwort freigegeben', letzte_aktion_am = now() WHERE fall_id = $1`,
+    [fallId]
+  );
+  return rows[0];
+}
+
+/** Zweiter Schritt nach Freigabe: bestaetigt den tatsaechlichen Versand.
+ * Erst hier wechselt der Fall-Status auf 'Antwort versandt' und faellt aus
+ * listeOffeneFaelle() heraus. */
+export async function bestaetigeAntwortVersand(fallId, versendetVon) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `UPDATE feldmark.auskunftsersuchen_erweiterung
+     SET    antwort_versendet_von = $2, antwort_versendet_am = now()
+     WHERE  fall_id = $1 AND antwort_freigegeben_am IS NOT NULL
+     RETURNING *`,
+    [fallId, versendetVon]
+  );
+  if (!rows[0]) return null;
+  await pool.query(
+    `UPDATE feldmark.auskunftsersuchen_faelle SET status = 'Antwort versandt', letzte_aktion_am = now() WHERE fall_id = $1`,
+    [fallId]
+  );
+  return rows[0];
+}
+
+/**
+ * E5: dokumentiert die Sperr-Entscheidung. rechtsgrundlageVorhanden=true
+ * nur, wenn das Schreiben selbst eine Beschlagnahme/einen Arrest traegt -
+ * ein reines Auskunftsersuchen fuehrt zu keiner Sperre (Sollkonzept 2.5).
+ * Loest KEINE echte Kontosperre aus (keine Kernbank-Anbindung) - protokolliert
+ * nur die getroffene Entscheidung samt Begruendung, in beide Richtungen
+ * (auch "keine Sperre" wird protokolliert, damit die Entscheidung
+ * nachvollziehbar bewusst getroffen wurde statt schlicht vergessen).
+ */
+export async function entscheideSperre(fallId, { rechtsgrundlageVorhanden, begruendung, entschiedenVon }) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `UPDATE feldmark.auskunftsersuchen_erweiterung
+     SET    sperre_rechtsgrundlage_vorhanden = $2, sperre_begruendung = $3,
+            sperre_entschieden_von = $4, sperre_entschieden_am = now()
+     WHERE  fall_id = $1
+     RETURNING *`,
+    [fallId, rechtsgrundlageVorhanden, begruendung ?? null, entschiedenVon]
+  );
+  if (!rows[0]) return null;
+  const eingangsdatum = (await getPool().query(
+    `SELECT to_char(eingangsdatum, 'YYYY-MM-DD') AS d FROM feldmark.auskunftsersuchen_faelle WHERE fall_id = $1`,
+    [fallId]
+  )).rows[0]?.d;
+  await protokolliere(
+    "feldmark.auskunftsersuchen_protokoll",
+    fallId,
+    rechtsgrundlageVorhanden ? "kontosperre_ausgeloest" : "kontosperre_nicht_ausgeloest",
+    eingangsdatum
   );
   return rows[0];
 }

@@ -1105,6 +1105,14 @@ p.view-lede {
   color: var(--moss);
 }
 
+/* Sperr-Entscheidung (Ast E, E5) - eigener Block innerhalb von
+   AuskunftsersuchenErweiterung.jsx, gleicher Trenner-Ton wie .diskrepanz. */
+.erweiterung__sperre {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--line);
+}
+
 /* ---------------------------------------------------------------- Verlauf */
 
 .verlauf {

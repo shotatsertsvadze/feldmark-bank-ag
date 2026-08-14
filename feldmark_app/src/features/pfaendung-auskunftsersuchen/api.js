@@ -97,6 +97,73 @@ export async function erklaerungVersenden(fallId, versendetVon) {
   ).erweiterung;
 }
 
+export async function auskunftsersuchenErweiterungLaden(fallId) {
+  return (await json(await fetch(`/api/faelle/${fallId}/auskunftsersuchen-erweiterung`))).fall;
+}
+
+export async function auskunftsersuchenErweiterungSpeichern(fallId, { freizugebendePunkte, rechtsgrundlageGeprueftVon, antwortWerte }) {
+  return (
+    await json(
+      await fetch(`/api/faelle/${fallId}/auskunftsersuchen-erweiterung`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          freizugebende_punkte: freizugebendePunkte,
+          rechtsgrundlage_geprueft_von: rechtsgrundlageGeprueftVon,
+          antwort_werte: antwortWerte,
+        }),
+      })
+    )
+  ).erweiterung;
+}
+
+export async function antwortErzeugen(fallId) {
+  return (await json(await fetch(`/api/faelle/${fallId}/antwort`, { method: "POST" }))).antwort_text;
+}
+
+// Gleiches 409-Vier-Augen-Muster wie erklaerungFreigeben().
+export async function antwortFreigeben(fallId, freigegebenVon, vierAugenBestaetigt = false) {
+  const antwort = await fetch(`/api/faelle/${fallId}/antwort/freigeben`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ freigegeben_von: freigegebenVon, vier_augen_bestaetigt: vierAugenBestaetigt }),
+  });
+  const daten = await antwort.json().catch(() => ({}));
+  if (antwort.status === 409 && daten.vier_augen_warnung) {
+    return { vierAugenWarnung: true, meldung: daten.fehler };
+  }
+  if (!antwort.ok) throw new Error(daten.fehler || `Server antwortete mit HTTP ${antwort.status}`);
+  return { erweiterung: daten.erweiterung };
+}
+
+export async function antwortVersenden(fallId, versendetVon) {
+  return (
+    await json(
+      await fetch(`/api/faelle/${fallId}/antwort/versenden`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ versendet_von: versendetVon }),
+      })
+    )
+  ).erweiterung;
+}
+
+export async function sperreEntscheiden(fallId, { rechtsgrundlageVorhanden, begruendung, entschiedenVon }) {
+  return (
+    await json(
+      await fetch(`/api/faelle/${fallId}/sperre-entscheidung`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rechtsgrundlage_vorhanden: rechtsgrundlageVorhanden,
+          begruendung,
+          entschieden_von: entschiedenVon,
+        }),
+      })
+    )
+  ).erweiterung;
+}
+
 // Gibt null zurueck statt zu werfen, wenn kein Datendiskrepanz-Eintrag
 // existiert (404 = Normalfall fuer die meisten Faelle, kein Fehler).
 export async function datendiskrepanzLaden(fallId) {
