@@ -166,6 +166,11 @@ select {
   color: #fff;
 }
 
+.sidebar__nav-link:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+}
+
 .sidebar__nav-link--active {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
@@ -784,6 +789,11 @@ p.view-lede {
   color: var(--brand);
 }
 
+.filter-tabs__btn:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+}
+
 .filter-tabs__btn--aktiv {
   background: var(--brand);
   border-color: var(--brand);
@@ -939,6 +949,12 @@ p.view-lede {
   background: var(--surface-sunken);
 }
 
+.fall-zeile--klickbar:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: -2px;
+  background: var(--surface-sunken);
+}
+
 .fall-zeile:has(.fristleiste.fall-zeile--kritisch),
 .fall-zeile:has(.fristleiste.fall-zeile--ueberfaellig) {
   box-shadow: inset 3px 0 0 var(--oxblood);
@@ -1073,6 +1089,11 @@ p.view-lede {
 .erweiterung__modal-schliessen:hover {
   color: var(--ink);
   background: var(--paper);
+}
+
+.erweiterung__modal-schliessen:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 1px;
 }
 
 .erweiterung__modal .erweiterung__erklaerung {

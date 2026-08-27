@@ -118,7 +118,16 @@ export default function Falluebersicht({ reloadSignal }) {
                 <div key={f.fall_id}>
                   <div
                     className="fall-zeile fall-zeile--klickbar"
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={istAufgeklappt}
                     onClick={() => setAufgeklapptFallId(istAufgeklappt ? null : f.fall_id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setAufgeklapptFallId(istAufgeklappt ? null : f.fall_id);
+                      }
+                    }}
                   >
                     <span className="fall-zeile__id">{f.fall_id}</span>
                     <div className="fall-zeile__parteien">
