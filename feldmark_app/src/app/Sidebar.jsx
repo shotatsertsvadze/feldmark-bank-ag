@@ -46,6 +46,7 @@ export default function Sidebar() {
           </NavLink>
         ))}
       </nav>
+      <p className="sidebar__footer">Weitere Bausteine folgen</p>
     </aside>
   );
 }

@@ -99,6 +99,8 @@ select {
   top: 0;
   height: 100vh;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .sidebar__brand {
@@ -183,6 +185,16 @@ select {
 .sidebar__nav-link--active:hover {
   background: rgba(255, 255, 255, 0.13);
   color: #fff;
+}
+
+.sidebar__footer {
+  margin-top: auto;
+  padding-top: 22px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(219, 228, 234, 0.4);
 }
 
 .shell__main {
@@ -390,6 +402,14 @@ p.view-lede {
   outline-offset: 1px;
   border-color: var(--brass);
   background: var(--surface);
+}
+
+.feld input:disabled {
+  border-style: dashed;
+  background: var(--line-soft);
+  color: var(--ink-faint);
+  font-style: italic;
+  cursor: not-allowed;
 }
 
 .pkonto-status {
@@ -1276,9 +1296,7 @@ p.view-lede {
 
 .fall-zeile__namen {
   font-size: 14px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: break-word;
 }
 
 .fall-zeile__status {
@@ -1293,7 +1311,7 @@ p.view-lede {
 .fristleiste {
   --spanne: 17; /* Tage, die die Leiste insgesamt abbildet (Puffer nach Fristende) */
   position: relative;
-  height: 32px;
+  height: 36px;
 }
 
 .fristleiste__spur {
@@ -1343,10 +1361,10 @@ p.view-lede {
 
 .fristleiste__label {
   position: absolute;
-  top: 20px;
+  top: 21px;
   left: 0;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 13.5px;
   font-weight: 700;
   color: var(--farbzone, var(--moss));
   white-space: nowrap;
