@@ -1,64 +1,63 @@
 {
-  "name": "Feldmark Bank AG — Pfaendung: Fristueberwachung (Postgres)",
+  "name": "Nickel — Pfaendung: Fristueberwachung (Postgres)",
   "nodes": [
     {
       "parameters": {
         "rule": {
           "interval": [
             {
-              "triggerAtHour": 7,
-              "triggerAtMinute": 0
+              "triggerAtHour": 7
             }
           ]
         }
       },
-      "id": "528cba7e-9da1-4412-bd5e-326b9551375c",
+      "id": "23a2cd85-687f-4e9d-9deb-0dea1cc5771f",
       "name": "Taeglich 07:00 Uhr",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        -520,
-        240
+        96,
+        224
       ]
     },
     {
       "parameters": {},
-      "id": "8f5db34f-e5c2-4ab6-ab9a-424a8cef49c9",
+      "id": "57bd41e3-4fdc-4196-8756-7779bf376a91",
       "name": "Manuell testen",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
       "position": [
-        -520,
-        420
+        96,
+        400
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT fall_id,\n       aktenzeichen,\n       glaeubiger,\n       schuldner,\n       to_char(zustelldatum, 'YYYY-MM-DD') AS zustelldatum,\n       zustellkanal,\n       status,\n       erinnerungen_gesendet,\n       bearbeiter_email,\n       vertretung_email,\n       vorgesetzte_email\nFROM   feldmark_pfaendung_faelle\nWHERE  status NOT IN ('Erklaerung versandt',\n                      'Abgeschlossen',\n                      'Abgeschlossen mit Fristversaeumnis')\nORDER  BY zustelldatum;",
+        "query": "SELECT fall_id,\n       aktenzeichen,\n       glaeubiger,\n       schuldner,\n       to_char(zustelldatum, 'YYYY-MM-DD') AS zustelldatum,\n       zustellkanal,\n       status,\n       erinnerungen_gesendet,\n       bearbeiter_email,\n       vertretung_email,\n       vorgesetzte_email\nFROM   feldmark.pfaendung_faelle\nWHERE  status NOT IN ('Erklaerung versandt',\n                      'Abgeschlossen',\n                      'Abgeschlossen mit Fristversaeumnis')\nORDER  BY zustelldatum;",
         "options": {}
       },
-      "id": "3dc132cc-0924-489f-b46f-1be388113153",
+      "id": "9a43793c-304b-4112-a448-7378c0c0fb90",
       "name": "Offene Faelle laden (Postgres)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        -280,
-        330
+        336,
+        320
       ],
       "alwaysOutputData": true
     },
     {
       "parameters": {
-        "jsCode": "\n// =====================================================================\n//  Fristberechnung § 840 ZPO  +  Ermittlung des Handlungsbedarfs\n//\n//  Identisch zur Mock-Variante aus Phase 3 — die Regel haengt nicht an\n//  der Datenquelle. Das ist der Punkt: Datenzugriff und Fachlogik sind\n//  getrennt, deshalb war der Wechsel Mock -> Postgres ein Node-Tausch.\n//\n//  Regeln:\n//   - Frist = Zustelldatum + 14 KALENDERtage (nicht Arbeitstage).\n//   - Faellt das Fristende auf Samstag, Sonntag oder Feiertag, verschiebt\n//     es sich auf den naechsten Werktag (§ 222 Abs. 2 ZPO i.V.m. § 193 BGB).\n//   - Erinnerung 1 am Tag des Fristbeginns.\n//   - Erinnerung 2 drei Kalendertage vor Fristende.\n//   - Eskalation an Vorgesetzte + Vertretung einen Tag vor Fristende.\n//   - Bereits gesendete Erinnerungen werden nicht wiederholt (Idempotenz).\n// =====================================================================\n\nconst FRIST_TAGE = 14;\nconst VORLAUF_ERINNERUNG_2 = 3;\nconst VORLAUF_ESKALATION = 1;\nconst STATUS_ERLEDIGT = ['Erklaerung versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis'];\n\n// Feiertage bitte pflegen — hier beispielhaft die bundeseinheitlichen 2026.\nconst FEIERTAGE = [\n  '2026-01-01', '2026-04-03', '2026-04-06', '2026-05-01',\n  '2026-05-14', '2026-05-25', '2026-10-03', '2026-12-25', '2026-12-26',\n];\n\nfunction toDate(s) { return new Date(String(s).slice(0, 10) + 'T00:00:00Z'); }\nfunction iso(d) { return d.toISOString().slice(0, 10); }\nfunction addDays(d, n) { const x = new Date(d); x.setUTCDate(x.getUTCDate() + n); return x; }\nfunction istWerktag(d) {\n  const wd = d.getUTCDay();\n  return wd !== 0 && wd !== 6 && !FEIERTAGE.includes(iso(d));\n}\nfunction naechsterWerktag(d) { let x = new Date(d); while (!istWerktag(x)) x = addDays(x, 1); return x; }\nfunction tageDiff(a, b) { return Math.round((a.getTime() - b.getTime()) / 86400000); }\n\nconst heute = new Date();\nheute.setUTCHours(0, 0, 0, 0);\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  const f = item.json;\n\n  const zustellung = toDate(f.zustelldatum);\n  const fristRoh = addDays(zustellung, FRIST_TAGE);\n  const frist = naechsterWerktag(fristRoh);\n  const restTage = tageDiff(frist, heute);\n\n  // Postgres liefert text[] als Array; leeres Array kommt je nach Treiber\n  // auch als null oder als String '{}' an — deshalb defensiv normalisieren.\n  let gesendet = f.erinnerungen_gesendet;\n  if (typeof gesendet === 'string') {\n    gesendet = gesendet.replace(/[{}\"]/g, '').split(',').filter(Boolean);\n  }\n  if (!Array.isArray(gesendet)) gesendet = [];\n\n  const erledigt = STATUS_ERLEDIGT.includes(f.status);\n\n  let aktion = 'keine';\n  let begruendung = '';\n\n  if (erledigt) {\n    aktion = 'keine';\n    begruendung = 'Erklaerung bereits versandt — Fristueberwachung fuer diesen Fall beendet.';\n  } else if (restTage < 0) {\n    aktion = 'fristversaeumnis';\n    begruendung = `Frist am ${iso(frist)} abgelaufen, Erklaerung nicht versandt.`;\n  } else if (restTage <= VORLAUF_ESKALATION && !gesendet.includes('eskalation')) {\n    aktion = 'eskalation';\n    begruendung = `Noch ${restTage} Tag(e) bis Fristablauf, Erklaerung offen.`;\n  } else if (restTage <= VORLAUF_ERINNERUNG_2 && !gesendet.includes('erinnerung_2')) {\n    aktion = 'erinnerung_2';\n    begruendung = `Noch ${restTage} Tag(e) bis Fristablauf.`;\n  } else if (!gesendet.includes('erinnerung_1')) {\n    aktion = 'erinnerung_1';\n    begruendung = 'Fristbeginn — Fall zur Bearbeitung eingesteuert.';\n  } else {\n    aktion = 'keine';\n    begruendung = `Noch ${restTage} Tag(e) Puffer, faellige Erinnerung bereits versandt.`;\n  }\n\n  out.push({\n    json: {\n      ...f,\n      erinnerungen_gesendet: gesendet,\n      fristende_roh: iso(fristRoh),\n      fristende: iso(frist),\n      fristende_verschoben: iso(frist) !== iso(fristRoh),\n      rest_tage: restTage,\n      heute: iso(heute),\n      aktion,\n      begruendung,\n    },\n  });\n}\n\nreturn out;\n"
+        "jsCode": "\n// =====================================================================\n//  Fristberechnung § 840 ZPO  +  Ermittlung des Handlungsbedarfs\n//\n//  Identisch zur Mock-Variante aus Phase 3 — die Regel haengt nicht an\n//  der Datenquelle. Das ist der Punkt: Datenzugriff und Fachlogik sind\n//  getrennt, deshalb war der Wechsel Mock -> Postgres ein Node-Tausch.\n//\n//  Regeln:\n//   - Frist = Zustelldatum + 14 KALENDERtage (nicht Arbeitstage).\n//   - Faellt das Fristende auf Samstag, Sonntag oder Feiertag, verschiebt\n//     es sich auf den naechsten Werktag (§ 222 Abs. 2 ZPO i.V.m. § 193 BGB).\n//   - Erinnerung 1 am Tag des Fristbeginns.\n//   - Erinnerung 2 drei Kalendertage vor Fristende.\n//   - Eskalation an Vorgesetzte + Vertretung einen Tag vor Fristende.\n//   - Bereits gesendete Erinnerungen werden nicht wiederholt (Idempotenz).\n//   - Ist bereits eskaliert, wird keine niedrigerprioritaere Erinnerung\n//     (erinnerung_2/erinnerung_1) mehr nachgereicht (kein Signal-Downgrade).\n// =====================================================================\n\nconst FRIST_TAGE = 14;\nconst VORLAUF_ERINNERUNG_2 = 3;\nconst VORLAUF_ESKALATION = 1;\nconst STATUS_ERLEDIGT = ['Erklaerung versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis'];\n\n// Feiertage bitte pflegen — hier beispielhaft die bundeseinheitlichen 2026.\nconst FEIERTAGE = [\n  '2026-01-01', '2026-04-03', '2026-04-06', '2026-05-01',\n  '2026-05-14', '2026-05-25', '2026-10-03', '2026-12-25', '2026-12-26',\n];\n\nfunction toDate(s) { return new Date(String(s).slice(0, 10) + 'T00:00:00Z'); }\nfunction iso(d) { return d.toISOString().slice(0, 10); }\nfunction addDays(d, n) { const x = new Date(d); x.setUTCDate(x.getUTCDate() + n); return x; }\nfunction istWerktag(d) {\n  const wd = d.getUTCDay();\n  return wd !== 0 && wd !== 6 && !FEIERTAGE.includes(iso(d));\n}\nfunction naechsterWerktag(d) { let x = new Date(d); while (!istWerktag(x)) x = addDays(x, 1); return x; }\nfunction tageDiff(a, b) { return Math.round((a.getTime() - b.getTime()) / 86400000); }\n\nconst heute = new Date();\nheute.setUTCHours(0, 0, 0, 0);\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  const f = item.json;\n\n  const zustellung = toDate(f.zustelldatum);\n  const fristRoh = addDays(zustellung, FRIST_TAGE);\n  const frist = naechsterWerktag(fristRoh);\n  const restTage = tageDiff(frist, heute);\n\n  // Postgres liefert text[] als Array; leeres Array kommt je nach Treiber\n  // auch als null oder als String '{}' an — deshalb defensiv normalisieren.\n  let gesendet = f.erinnerungen_gesendet;\n  if (typeof gesendet === 'string') {\n    gesendet = gesendet.replace(/[{}\"]/g, '').split(',').filter(Boolean);\n  }\n  if (!Array.isArray(gesendet)) gesendet = [];\n\n  const erledigt = STATUS_ERLEDIGT.includes(f.status);\n\n  let aktion = 'keine';\n  let begruendung = '';\n\n  if (erledigt) {\n    aktion = 'keine';\n    begruendung = 'Erklaerung bereits versandt — Fristueberwachung fuer diesen Fall beendet.';\n  } else if (restTage < 0) {\n    if (!gesendet.includes('fristversaeumnis')) {\n      aktion = 'fristversaeumnis';\n      begruendung = `Frist am ${iso(frist)} abgelaufen, Erklaerung nicht versandt.`;\n    } else {\n      aktion = 'keine';\n      begruendung = `Frist am ${iso(frist)} abgelaufen, Fristversaeumnis bereits dokumentiert.`;\n    }\n  } else if (restTage <= VORLAUF_ESKALATION && !gesendet.includes('eskalation')) {\n    aktion = 'eskalation';\n    begruendung = `Noch ${restTage} Tag(e) bis Fristablauf, Erklaerung offen.`;\n  } else if (restTage <= VORLAUF_ERINNERUNG_2 && !gesendet.includes('erinnerung_2') && !gesendet.includes('eskalation')) {\n    aktion = 'erinnerung_2';\n    begruendung = `Noch ${restTage} Tag(e) bis Fristablauf.`;\n  } else if (!gesendet.includes('erinnerung_1') && !gesendet.includes('erinnerung_2') && !gesendet.includes('eskalation')) {\n    aktion = 'erinnerung_1';\n    begruendung = 'Fristbeginn — Fall zur Bearbeitung eingesteuert.';\n  } else {\n    aktion = 'keine';\n    begruendung = `Noch ${restTage} Tag(e) Puffer, faellige Erinnerung bereits versandt.`;\n  }\n\n  out.push({\n    json: {\n      ...f,\n      erinnerungen_gesendet: gesendet,\n      fristende_roh: iso(fristRoh),\n      fristende: iso(frist),\n      fristende_verschoben: iso(frist) !== iso(fristRoh),\n      rest_tage: restTage,\n      heute: iso(heute),\n      aktion,\n      begruendung,\n    },\n  });\n}\n\nreturn out;\n"
       },
-      "id": "faf95e33-546a-43e0-bc99-1eef0f33b542",
+      "id": "558f8dc6-b793-4bc7-878b-421bd674f49c",
       "name": "Fristen berechnen (§ 840 ZPO)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -40,
-        330
+        576,
+        320
       ]
     },
     {
@@ -189,13 +188,13 @@
         },
         "options": {}
       },
-      "id": "3afe8899-3572-451d-bf66-c9a47a492d5f",
+      "id": "06075996-30c0-49b5-8a9e-0ce1861e18be",
       "name": "Handlungsbedarf?",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.2,
       "position": [
-        220,
-        330
+        832,
+        320
       ]
     },
     {
@@ -205,7 +204,7 @@
             {
               "id": "0705439f-89ea-48a6-9991-b759574ae872",
               "name": "empfaenger",
-              "value": "={{ $json.bearbeiter_email }}, {{ $json.vertretung_email }}",
+              "value": "={{ [$json.bearbeiter_email, $json.vertretung_email].filter(Boolean).join(', ') }}",
               "type": "string"
             },
             {
@@ -229,7 +228,7 @@
             {
               "id": "823b923b-3cc8-4dbd-860c-563e7f8e2653",
               "name": "neuer_status",
-              "value": "={{ $json.status }}",
+              "value": "={{ $json.status === 'Eingegangen' ? 'In Bearbeitung' : $json.status }}",
               "type": "string"
             },
             {
@@ -243,13 +242,13 @@
         "includeOtherFields": true,
         "options": {}
       },
-      "id": "f8911354-6b49-4332-96e2-08b5d1d2eb0f",
+      "id": "159179a3-9447-41fe-8690-ebabefaf6f39",
       "name": "Erinnerung 1 aufbereiten",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        480,
-        60
+        1088,
+        48
       ]
     },
     {
@@ -259,7 +258,7 @@
             {
               "id": "5f7c7c32-7cc3-4f90-8099-2f87ff7ea309",
               "name": "empfaenger",
-              "value": "={{ $json.bearbeiter_email }}, {{ $json.vertretung_email }}",
+              "value": "={{ [$json.bearbeiter_email, $json.vertretung_email].filter(Boolean).join(', ') }}",
               "type": "string"
             },
             {
@@ -283,7 +282,7 @@
             {
               "id": "df6b54d6-45bb-4ecc-aa86-8be65eb8a1d4",
               "name": "neuer_status",
-              "value": "={{ $json.status }}",
+              "value": "={{ $json.status === 'Eingegangen' ? 'In Bearbeitung' : $json.status }}",
               "type": "string"
             },
             {
@@ -297,13 +296,13 @@
         "includeOtherFields": true,
         "options": {}
       },
-      "id": "95f0e085-9164-4bd5-b990-721325782055",
+      "id": "f175f98d-8ace-4452-91ad-4a8f550eb316",
       "name": "Erinnerung 2 aufbereiten",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        480,
-        230
+        1088,
+        224
       ]
     },
     {
@@ -313,7 +312,7 @@
             {
               "id": "b94a9852-869a-4ae2-8238-15f2e56fc0c4",
               "name": "empfaenger",
-              "value": "={{ $json.vorgesetzte_email }}, {{ $json.bearbeiter_email }}, {{ $json.vertretung_email }}",
+              "value": "={{ [$json.vorgesetzte_email, $json.bearbeiter_email, $json.vertretung_email].filter(Boolean).join(', ') }}",
               "type": "string"
             },
             {
@@ -337,7 +336,7 @@
             {
               "id": "9eac2435-9426-49a1-bbe6-07c5c857fc0f",
               "name": "neuer_status",
-              "value": "={{ $json.status }}",
+              "value": "={{ $json.status === 'Eingegangen' ? 'In Bearbeitung' : $json.status }}",
               "type": "string"
             },
             {
@@ -351,13 +350,13 @@
         "includeOtherFields": true,
         "options": {}
       },
-      "id": "10073001-bd43-4aa8-94e6-c18b36b1e312",
+      "id": "14b18c62-1bbc-4230-828b-5b8f7f4365c5",
       "name": "Eskalation aufbereiten",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        480,
-        400
+        1088,
+        384
       ]
     },
     {
@@ -405,87 +404,89 @@
         "includeOtherFields": true,
         "options": {}
       },
-      "id": "69d563a4-b3ad-466c-8165-2a72411d6fa1",
+      "id": "22f2a804-defb-4ba7-aefe-c30dd0b4dca9",
       "name": "Fristversaeumnis dokumentieren",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        480,
-        570
+        1088,
+        560
       ]
     },
     {
       "parameters": {},
-      "id": "2b0975a7-2150-4287-80a5-85271c387672",
+      "id": "39fa4ec9-d167-4951-829d-97e3b7afb3c7",
       "name": "Kein Handlungsbedarf",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        480,
-        740
+        1088,
+        720
       ]
     },
     {
       "parameters": {},
-      "id": "a3c25b9b-2306-4960-a3c3-ea5c81b31570",
+      "id": "c9f6bebd-d3a9-4d86-876d-09797cc02c99",
       "name": "Versand (Platzhalter)",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        760,
-        300
+        1376,
+        288
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO feldmark_pfaendung_protokoll\n       (fall_id, ereignis, fristende, rest_tage, empfaenger, prioritaet)\nVALUES ($1, $2, $3::date, $4::int, $5, $6);",
+        "query": "INSERT INTO feldmark.pfaendung_protokoll\n       (fall_id, ereignis, fristende, rest_tage, empfaenger, prioritaet)\nVALUES ($1, $2, $3::date, $4::int, $5, $6);",
         "options": {
-          "queryReplacement": "={{ $('Versand (Platzhalter)').item.json.fall_id }}, {{ $('Versand (Platzhalter)').item.json.aktion }}, {{ $('Versand (Platzhalter)').item.json.fristende }}, {{ $('Versand (Platzhalter)').item.json.rest_tage }}, {{ $('Versand (Platzhalter)').item.json.empfaenger }}, {{ $('Versand (Platzhalter)').item.json.prioritaet }}"
+          "queryReplacement": "={{ [ $('Versand (Platzhalter)').item.json.fall_id, $('Versand (Platzhalter)').item.json.aktion, $('Versand (Platzhalter)').item.json.fristende, $('Versand (Platzhalter)').item.json.rest_tage, $('Versand (Platzhalter)').item.json.empfaenger, $('Versand (Platzhalter)').item.json.prioritaet ] }}",
+          "queryBatching": "independently"
         }
       },
-      "id": "13be8ff5-f4be-4ec1-ab9e-ce0faa0c0a2c",
+      "id": "41a36309-c40f-4e98-a9c4-9b39353e6042",
       "name": "Protokoll schreiben (KPI-Basis)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        1000,
-        300
+        1616,
+        288
       ],
       "alwaysOutputData": true
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE feldmark_pfaendung_faelle\nSET    erinnerungen_gesendet = array_append(erinnerungen_gesendet, $1),\n       status                = $2,\n       letzte_aktion_am      = now()\nWHERE  fall_id = $3\n  AND  NOT ($1 = ANY (erinnerungen_gesendet))\nRETURNING fall_id, status, erinnerungen_gesendet;",
+        "query": "UPDATE feldmark.pfaendung_faelle\nSET    erinnerungen_gesendet = array_append(erinnerungen_gesendet, $1),\n       status                = $2,\n       letzte_aktion_am      = now()\nWHERE  fall_id = $3\n  AND  NOT ($1 = ANY (erinnerungen_gesendet))\nRETURNING fall_id, status, erinnerungen_gesendet;",
         "options": {
-          "queryReplacement": "={{ $('Versand (Platzhalter)').item.json.erinnerung_marker }}, {{ $('Versand (Platzhalter)').item.json.neuer_status }}, {{ $('Versand (Platzhalter)').item.json.fall_id }}"
+          "queryReplacement": "={{ $('Versand (Platzhalter)').item.json.erinnerung_marker }}, {{ $('Versand (Platzhalter)').item.json.neuer_status }}, {{ $('Versand (Platzhalter)').item.json.fall_id }}",
+          "queryBatching": "independently"
         }
       },
-      "id": "63df3346-8138-431a-ab02-68a727aeb22b",
+      "id": "a3f06d57-21d2-418c-aa51-4d00d32942b5",
       "name": "Status zurueckschreiben (Idempotenz)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        1240,
-        300
+        1856,
+        288
       ],
       "alwaysOutputData": true
     },
     {
       "parameters": {
-        "content": "## Phase 3b — Pilot gegen echte Datenquelle\n\nGegenueber der Mock-Variante sind genau **drei Nodes** getauscht:\nDatenquelle, Protokoll und Status-Rueckschreibung sind jetzt echte Postgres-Nodes. Fristlogik und Nachrichtentexte sind unveraendert.\n\n**Vorher einmalig:** `feldmark_pfaendung_schema.sql` in der Datenbank ausfuehren (Tabellen + 6 Testfaelle), dann in beiden Postgres-Nodes die Credential auswaehlen.\n\n**Weiterhin Platzhalter:** der Versand. Dort kommt ein Gmail-, Outlook- oder SMTP-Node hin; `empfaenger`, `betreff` und `nachricht` sind fertig aufbereitet.",
+        "content": "## Phase 3b — Pilot gegen echte Datenquelle\n\nGegenueber der Mock-Variante sind genau **drei Nodes** getauscht:\nDatenquelle, Protokoll und Status-Rueckschreibung sind jetzt echte Postgres-Nodes. Fristlogik und Nachrichtentexte sind unveraendert.\n\n**Vorher einmalig:** `nickel_pfaendung_schema.sql` in der Datenbank ausfuehren (Tabellen + 6 Testfaelle), dann in beiden Postgres-Nodes die Credential auswaehlen.\n\n**Weiterhin Platzhalter:** der Versand. Dort kommt ein Gmail-, Outlook- oder SMTP-Node hin; `empfaenger`, `betreff` und `nachricht` sind fertig aufbereitet.",
         "height": 330,
         "width": 470,
         "color": 4
       },
-      "id": "e57f8e18-f421-4879-8858-46ff75190dec",
+      "id": "00526c5d-bae7-4b24-a264-e83928cf946a",
       "name": "Sticky Note 9b653c7a",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -560,
-        -60
+        48,
+        -80
       ]
     },
     {
@@ -495,13 +496,13 @@
         "width": 400,
         "color": 3
       },
-      "id": "a5585030-3dc5-44ff-9176-0665c6571163",
+      "id": "770effa5-66c2-43ee-bfaa-951ae4cbaa73",
       "name": "Sticky Note 5f45d774",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        950,
-        -60
+        1568,
+        -80
       ]
     },
     {
@@ -511,13 +512,13 @@
         "width": 400,
         "color": 5
       },
-      "id": "253e4f99-a5c9-4b3d-b4c7-48ebbf38b80c",
+      "id": "4570170d-994b-4fe7-a6f3-a014b7175c15",
       "name": "Sticky Note 4998d33c",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        950,
-        620
+        1568,
+        608
       ]
     },
     {
@@ -527,14 +528,364 @@
         "width": 470,
         "color": 3
       },
-      "id": "b3771a20-d4b6-4da5-be9b-136005eb5b51",
+      "id": "ab242e53-eb8f-46c1-8463-909cb2fe65bf",
       "name": "Sticky Note b1f4df4d",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -560,
-        620
+        48,
+        608
       ]
+    },
+    {
+      "id": "17b4582d-4cfe-4f24-9a0a-114a229c87a2",
+      "name": "Sticky Note Feiertage-Pflege",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        576,
+        -180
+      ],
+      "parameters": {
+        "content": "### Feiertage bitte jaehrlich pflegen\n\n`FEIERTAGE` im Code-Node rechts enthaelt nur die bundeseinheitlichen 2026-Termine. Ohne jaehrliche Ergaenzung erkennt `istWerktag()` ab 1.1.2027 keine Feiertage mehr (nur noch Wochenenden) - ein Fristende koennte dann faelschlich auf einen Feiertag statt den naechsten Werktag fallen.",
+        "height": 220,
+        "width": 460,
+        "color": 3
+      }
+    },
+    {
+      "id": "91e39f43-06af-4a4d-8703-69f893154949",
+      "name": "Datendiskrepanz laden (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        336,
+        1120
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT f.fall_id, f.aktenzeichen,\n       to_char(f.zustelldatum, 'YYYY-MM-DD') AS zustelldatum,\n       d.rueckfrage_gesendet_am, d.nachfassung_1_gesendet_am,\n       d.nachfassung_2_gesendet_am, d.fristwahrend_erklaert_am\nFROM   feldmark.pfaendung_datendiskrepanz d\nJOIN   feldmark.pfaendung_faelle f ON f.fall_id = d.fall_id\nWHERE  d.geklaert_am IS NULL AND d.geschlossen_am IS NULL;",
+        "options": {}
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "9199a1c2-96c7-48fd-a743-eaeb4fc68eac",
+      "name": "Datendiskrepanz-Aktion bestimmen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        1120
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// =====================================================================\n//  Datendiskrepanz-Sweep: faellige Aktion bestimmen + Text erzeugen\n//\n//  MUSS SYNCHRON GEHALTEN WERDEN mit feldmark_app/server/datendiskrepanz.js\n//  - dieselbe Logik existiert bewusst zweimal (Nutzerentscheidung vom\n//  2026-08-14: Duplizierung statt Deployment, siehe KONTEXT.md und die\n//  Sticky Note links). Aendert sich eine Frist-Schwelle oder ein\n//  Textbaustein dort, muss dieser Code-Node manuell nachgezogen werden.\n// =====================================================================\n\nconst NACHFASSUNG_1_TAGE = 3;\nconst NACHFASSUNG_2_TAGE = 6;\nconst FRISTWAHREND_SPAETESTENS_TAG = 10;\nconst SCHLIESSEN_NACH_TAGEN = 30;\n\nfunction tageSeit(datumWert) {\n  if (!datumWert) return null;\n  return Math.floor((Date.now() - new Date(datumWert).getTime()) / 86400000);\n}\nconst heute = () => new Date().toLocaleDateString('de-DE');\nconst datum = (iso) => new Date(iso).toLocaleDateString('de-DE');\n\nfunction erzeugeNachfassung(f, nummer) {\n  return [\n    `NACHFASSUNG ${nummer} zur Rückfrage vom ${datum(f.rueckfrage_gesendet_am)}`,\n    ``,\n    `Ihr Aktenzeichen: ${f.aktenzeichen}`,\n    `Unser Aktenzeichen: ${f.fall_id}`,\n    ``,\n    `Sehr geehrte Damen und Herren,`,\n    ``,\n    `wir haben Ihnen am ${datum(f.rueckfrage_gesendet_am)} eine Rückfrage zur Identifikation des Schuldners im oben genannten Vorgang übersandt und bislang keine Antwort erhalten.`,\n    ``,\n    `Bitte teilen Sie uns die angefragten Angaben kurzfristig mit.`,\n    ``,\n    `Mit freundlichen Grüßen`,\n    `Feldmark Bank AG`,\n    ``,\n    `— automatisch erzeugt am ${heute()} —`,\n  ].join('\\n');\n}\n\nfunction erzeugeFristwahrendeErklaerung(f) {\n  return [\n    `DRITTSCHULDNERERKLÄRUNG gemäß § 840 ZPO`,\n    ``,\n    `Ihr Aktenzeichen: ${f.aktenzeichen}`,\n    `Unser Aktenzeichen: ${f.fall_id}`,\n    `Zustellung des Schreibens: ${datum(f.zustelldatum)}`,\n    ``,\n    `Sehr geehrte Damen und Herren,`,\n    ``,\n    `zu dem oben genannten Vorgang erklären wir gemäß § 840 Abs. 1 ZPO wie folgt:`,\n    ``,\n    `1. Eine Geschäftsverbindung zu dem in Ihrem Schreiben bezeichneten Schuldner konnte anhand der uns vorliegenden Daten nicht festgestellt werden. Wir haben Sie hierzu am ${datum(f.rueckfrage_gesendet_am)} um ergänzende Angaben gebeten; eine für die Zuordnung ausreichende Antwort liegt bis heute nicht vor.`,\n    `2. Diese Erklärung wahrt die gesetzliche Frist. Sollte die Zuordnung anhand nachträglich eingehender Angaben gelingen, wird der Vorgang unverzüglich erneut geprüft und, falls zutreffend, eine ergänzende Erklärung nach § 840 ZPO abgegeben.`,\n    ``,\n    `Mit freundlichen Grüßen`,\n    `Feldmark Bank AG`,\n    ``,\n    `— automatisch erzeugt am ${heute()}, vor Versand durch Mitarbeiter zu bestätigen —`,\n  ].join('\\n');\n}\n\nconst out = [];\nfor (const item of $input.all()) {\n  const f = item.json;\n  const tageSeitZustellung = tageSeit(f.zustelldatum);\n  const tageSeitRueckfrage = tageSeit(f.rueckfrage_gesendet_am);\n\n  let aktion = 'keine';\n  let text = null;\n\n  if (tageSeitZustellung >= FRISTWAHREND_SPAETESTENS_TAG && !f.fristwahrend_erklaert_am) {\n    aktion = 'fristwahrend_erklaert';\n    text = erzeugeFristwahrendeErklaerung(f);\n  } else if (tageSeitRueckfrage >= SCHLIESSEN_NACH_TAGEN) {\n    aktion = 'geschlossen_ungeklaert';\n  } else if (tageSeitRueckfrage >= NACHFASSUNG_2_TAGE && !f.nachfassung_2_gesendet_am) {\n    aktion = 'nachfassung_2';\n    text = erzeugeNachfassung(f, 2);\n  } else if (tageSeitRueckfrage >= NACHFASSUNG_1_TAGE && !f.nachfassung_1_gesendet_am) {\n    aktion = 'nachfassung_1';\n    text = erzeugeNachfassung(f, 1);\n  }\n\n  out.push({ json: { ...f, aktion, text } });\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "bfa7c3c0-aa2b-4a8a-b7f9-63eb9829b421",
+      "name": "Datendiskrepanz-Aktion?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        832,
+        1120
+      ],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "Nachfassung 1",
+              "renameOutput": true,
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.aktion }}",
+                    "rightValue": "nachfassung_1",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                }
+              }
+            },
+            {
+              "outputKey": "Nachfassung 2",
+              "renameOutput": true,
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.aktion }}",
+                    "rightValue": "nachfassung_2",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                }
+              }
+            },
+            {
+              "outputKey": "Fristwahrend erklaeren",
+              "renameOutput": true,
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.aktion }}",
+                    "rightValue": "fristwahrend_erklaert",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                }
+              }
+            },
+            {
+              "outputKey": "Schliessen (30 Tage)",
+              "renameOutput": true,
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.aktion }}",
+                    "rightValue": "geschlossen_ungeklaert",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                }
+              }
+            },
+            {
+              "outputKey": "Kein Handlungsbedarf",
+              "renameOutput": true,
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.aktion }}",
+                    "rightValue": "keine",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                }
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ab0635ca-fd54-4d39-bdca-d7ec357babed",
+      "name": "Nachfassung 1 schreiben",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1088,
+        920
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE feldmark.pfaendung_datendiskrepanz\nSET    nachfassung_1_text = $1, nachfassung_1_gesendet_am = now()\nWHERE  fall_id = $2 AND nachfassung_1_gesendet_am IS NULL\nRETURNING fall_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.text, $json.fall_id] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "5840e9af-7174-4a48-b4a3-19f5899f4aac",
+      "name": "Nachfassung 2 schreiben",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1088,
+        1040
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE feldmark.pfaendung_datendiskrepanz\nSET    nachfassung_2_text = $1, nachfassung_2_gesendet_am = now()\nWHERE  fall_id = $2 AND nachfassung_2_gesendet_am IS NULL\nRETURNING fall_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.text, $json.fall_id] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "d1c170ed-7c14-4563-9e56-bc531ebd4149",
+      "name": "Erklaerung speichern (Erweiterung)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1088,
+        1160
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE feldmark.pfaendung_erweiterung\nSET    erklaerung_text = $1, erklaerung_erzeugt_am = now(),\n       erklaerung_freigegeben_von = NULL, erklaerung_freigegeben_am = NULL,\n       erklaerung_versendet_von = NULL, erklaerung_versendet_am = NULL\nWHERE  fall_id = $2\nRETURNING fall_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.text, $json.fall_id] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "3efacd0d-91c5-400e-be02-bfdd3b013d12",
+      "name": "Datendiskrepanz markieren (fristwahrend)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1328,
+        1160
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE feldmark.pfaendung_datendiskrepanz SET fristwahrend_erklaert_am = now() WHERE fall_id = $1 RETURNING fall_id;",
+        "options": {
+          "queryReplacement": "={{ [$('Datendiskrepanz-Aktion bestimmen').item.json.fall_id] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "b795298b-545d-48bd-922f-6453367701ec",
+      "name": "Status setzen (fristwahrend)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1568,
+        1160
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE feldmark.pfaendung_faelle SET status = 'Klaerung offen - fristwahrend erklaert', letzte_aktion_am = now() WHERE fall_id = $1 RETURNING fall_id;",
+        "options": {
+          "queryReplacement": "={{ [$('Datendiskrepanz-Aktion bestimmen').item.json.fall_id] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "e63a63a2-8f73-468c-b246-160f4d64bae9",
+      "name": "Datendiskrepanz schliessen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1088,
+        1320
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE feldmark.pfaendung_datendiskrepanz\nSET    geschlossen_am = now(), geschlossen_grund = $1\nWHERE  fall_id = $2 AND geklaert_am IS NULL AND geschlossen_am IS NULL\nRETURNING fall_id;",
+        "options": {
+          "queryReplacement": "={{ [\"Keine ausreichende Antwort des Glaeubigers innerhalb von 30 Tagen - Zuordnung nicht moeglich.\", $json.fall_id] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "681b6d57-8968-4614-8ab0-1ee7a84936a7",
+      "name": "Status setzen (Abgeschlossen)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1328,
+        1320
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE feldmark.pfaendung_faelle SET status = 'Abgeschlossen', letzte_aktion_am = now() WHERE fall_id = $1 RETURNING fall_id;",
+        "options": {
+          "queryReplacement": "={{ [$('Datendiskrepanz-Aktion bestimmen').item.json.fall_id] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "b01443c2-93c4-476b-98c9-6de7381bf95e",
+      "name": "Kein Handlungsbedarf (Datendiskrepanz)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1088,
+        1440
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "b2d4c9b0-ea70-4a64-b5f9-ad32a9519b17",
+      "name": "Sticky Note Datendiskrepanz-Sweep",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        48,
+        980
+      ],
+      "parameters": {
+        "content": "## Datendiskrepanz-Sweep (Ast A, Sollkonzept 3.1)\n\nEigenstaendiger Zweig ab denselben Triggern oben. Verarbeitet Faelle, bei denen der Schuldnername in der Extraktion fehlte (feldmark_app legt diese trotzdem an, mit Platzhalter-Schuldner, statt sie in die Sichtpruefung zu schicken - siehe feldmark_pfaendung_datendiskrepanz_schema.sql).\n\n**Wichtig: Die Logik im Code-Node rechts dupliziert bewusst `feldmark_app/server/datendiskrepanz.js`.** feldmark_app ist nirgends deployed, n8n kann den dortigen Sweep-Endpunkt (`POST /api/sweep/datendiskrepanz`) nicht erreichen - Nutzerentscheidung vom 2026-08-14: Duplizierung statt Deployment. Aendert sich dort eine Frist-Schwelle (3/6/10/30 Tage) oder ein Textbaustein, MUSS dieser Code-Node manuell nachgezogen werden. Sauberer waere ein HTTP-Request-Node auf den Endpunkt, sobald die App deployed ist.",
+        "height": 300,
+        "width": 460,
+        "color": 4
+      }
+    },
+    {
+      "id": "2a2a60c1-729e-4b64-b741-34779ee35288",
+      "name": "Sweep-Status: erfolgreich",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        336,
+        620
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO feldmark.sweep_status (sweep_name, status, zuletzt_gelaufen_am, meldung)\nVALUES ('pfaendung', 'erfolgreich', now(), NULL)\nON CONFLICT (sweep_name) DO UPDATE\nSET    status = 'erfolgreich', zuletzt_gelaufen_am = now(), meldung = NULL;",
+        "options": {}
+      }
     }
   ],
   "connections": {
@@ -543,6 +894,16 @@
         [
           {
             "node": "Offene Faelle laden (Postgres)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Datendiskrepanz laden (Postgres)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sweep-Status: erfolgreich",
             "type": "main",
             "index": 0
           }
@@ -554,6 +915,16 @@
         [
           {
             "node": "Offene Faelle laden (Postgres)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Datendiskrepanz laden (Postgres)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sweep-Status: erfolgreich",
             "type": "main",
             "index": 0
           }
@@ -686,10 +1057,107 @@
           }
         ]
       ]
+    },
+    "Datendiskrepanz laden (Postgres)": {
+      "main": [
+        [
+          {
+            "node": "Datendiskrepanz-Aktion bestimmen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datendiskrepanz-Aktion bestimmen": {
+      "main": [
+        [
+          {
+            "node": "Datendiskrepanz-Aktion?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datendiskrepanz-Aktion?": {
+      "main": [
+        [
+          {
+            "node": "Nachfassung 1 schreiben",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nachfassung 2 schreiben",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Erklaerung speichern (Erweiterung)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Datendiskrepanz schliessen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Kein Handlungsbedarf (Datendiskrepanz)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Erklaerung speichern (Erweiterung)": {
+      "main": [
+        [
+          {
+            "node": "Datendiskrepanz markieren (fristwahrend)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datendiskrepanz markieren (fristwahrend)": {
+      "main": [
+        [
+          {
+            "node": "Status setzen (fristwahrend)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datendiskrepanz schliessen": {
+      "main": [
+        [
+          {
+            "node": "Status setzen (Abgeschlossen)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true,
+    "errorWorkflow": "VASVi0WFdgXR2OSb"
   },
   "pinData": {},
   "meta": {

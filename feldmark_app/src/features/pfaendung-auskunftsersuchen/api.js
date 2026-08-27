@@ -47,7 +47,7 @@ export async function erweiterungLaden(fallId) {
   return (await json(await fetch(`/api/faelle/${fallId}/erweiterung`))).fall;
 }
 
-export async function erweiterungSpeichern(fallId, { istPKonto, freibetragErhoehungEur, guthabenEur, guthabenErfasstVon }) {
+export async function erweiterungSpeichern(fallId, { istPKonto, freibetragErhoehungEur, guthabenEur, guthabenErfasstVon, pKontoGeprueft }) {
   return json(
     await fetch(`/api/faelle/${fallId}/erweiterung`, {
       method: "PUT",
@@ -57,6 +57,7 @@ export async function erweiterungSpeichern(fallId, { istPKonto, freibetragErhoeh
         freibetrag_erhoehung_eur: freibetragErhoehungEur,
         guthaben_eur: guthabenEur,
         guthaben_erfasst_von: guthabenErfasstVon,
+        p_konto_geprueft: pKontoGeprueft,
       }),
     })
   );
@@ -95,6 +96,10 @@ export async function erklaerungVersenden(fallId, versendetVon) {
       })
     )
   ).erweiterung;
+}
+
+export async function erklaerungAblehnen(fallId) {
+  return (await json(await fetch(`/api/faelle/${fallId}/erklaerung/ablehnen`, { method: "POST" }))).erweiterung;
 }
 
 export async function auskunftsersuchenErweiterungLaden(fallId) {
@@ -146,6 +151,10 @@ export async function antwortVersenden(fallId, versendetVon) {
       })
     )
   ).erweiterung;
+}
+
+export async function antwortAblehnen(fallId) {
+  return (await json(await fetch(`/api/faelle/${fallId}/antwort/ablehnen`, { method: "POST" }))).erweiterung;
 }
 
 export async function sperreEntscheiden(fallId, { rechtsgrundlageVorhanden, begruendung, entschiedenVon }) {

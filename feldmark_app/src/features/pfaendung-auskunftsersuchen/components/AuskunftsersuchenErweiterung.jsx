@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  antwortAblehnen,
   antwortErzeugen,
   antwortFreigeben,
   antwortVersenden,
@@ -23,6 +24,7 @@ export default function AuskunftsersuchenErweiterung({ fallId, onFallGeaendert }
   const [bestaetigtVersand, setBestaetigtVersand] = useState(false);
   const [zeigtModal, setZeigtModal] = useState(false);
   const [speichertSperre, setSpeichertSperre] = useState(false);
+  const [lehntAb, setLehntAb] = useState(false);
 
   const [ausgewaehltePunkte, setAusgewaehltePunkte] = useState([]);
   const [antwortWerte, setAntwortWerte] = useState({});
@@ -143,6 +145,24 @@ export default function AuskunftsersuchenErweiterung({ fallId, onFallGeaendert }
       setFehler(String(e.message || e));
     } finally {
       setBestaetigtVersand(false);
+    }
+  }
+
+  // Gleiches Muster wie ablehnen() in PfaendungErweiterung.jsx - siehe
+  // dortiger Kommentar.
+  async function ablehnen() {
+    setLehntAb(true);
+    setFehler(null);
+    try {
+      const erweiterung = await antwortAblehnen(fallId);
+      setErw(erweiterung);
+      setVierAugenWarnung(null);
+      setZeigtModal(false);
+      onFallGeaendert?.();
+    } catch (e) {
+      setFehler(String(e.message || e));
+    } finally {
+      setLehntAb(false);
     }
   }
 
@@ -285,6 +305,14 @@ export default function AuskunftsersuchenErweiterung({ fallId, onFallGeaendert }
 
             <div className="erweiterung__erklaerung">
               <textarea readOnly value={erw.antwort_text} rows={14} />
+
+              {!istVersendet && (
+                <div className="erweiterung__aktionen">
+                  <button className="nav-tabs__btn nav-tabs__btn--ablehnen" onClick={ablehnen} disabled={lehntAb}>
+                    {lehntAb ? "Lehnt ab …" : "Ablehnen"}
+                  </button>
+                </div>
+              )}
 
               {!istFreigegeben && (
                 <div className="erweiterung__aktionen">

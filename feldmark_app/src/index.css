@@ -273,6 +273,15 @@ select {
   background: var(--brand);
 }
 
+.nav-tabs__btn--ablehnen {
+  border-color: var(--oxblood);
+  color: var(--oxblood);
+}
+
+.nav-tabs__btn--ablehnen:hover {
+  background: var(--oxblood-bg);
+}
+
 section.view {
   animation: view-in 0.32s cubic-bezier(0.16, 0.8, 0.3, 1);
 }
@@ -381,6 +390,32 @@ p.view-lede {
   outline-offset: 1px;
   border-color: var(--brass);
   background: var(--surface);
+}
+
+.pkonto-status {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.pkonto-status label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--ink);
+  font-size: 13.5px;
+}
+
+.pkonto-status input[type="radio"] {
+  width: auto;
+}
+
+.pkonto-status__ungeprueft {
+  color: var(--ink-soft);
+  font-style: italic;
 }
 
 .feld--optional label::after {

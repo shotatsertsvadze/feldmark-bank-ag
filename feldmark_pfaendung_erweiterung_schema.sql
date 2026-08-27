@@ -31,6 +31,12 @@ CREATE TABLE IF NOT EXISTS feldmark.pfaendung_erweiterung (
 
     -- P-Konto (§§ 899 ff. ZPO)
     ist_p_konto                  boolean     NOT NULL DEFAULT false,
+    -- Tri-State-Marker, getrennt von ist_p_konto: "noch nicht geprueft" ist
+    -- ein eigener Zustand (Code-Review-Fund 2026-08-27 - vorher war ein
+    -- unberuehrtes ist_p_konto=false ununterscheidbar von einer bewussten
+    -- "kein P-Konto"-Entscheidung, wodurch das Speichern des Guthabens
+    -- allein schon die P-Konto-Benachrichtigung ausloesen konnte).
+    p_konto_geprueft             boolean     NOT NULL DEFAULT false,
     p_konto_freibetrag_erhoehung numeric(12,2) NOT NULL DEFAULT 0,
     p_konto_benachrichtigt_am    timestamptz,
 

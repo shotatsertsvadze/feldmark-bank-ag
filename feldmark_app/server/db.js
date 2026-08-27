@@ -129,8 +129,8 @@ export async function legePfaendungsfallAn(klassifikation, eingang) {
   await pool.query(
     `INSERT INTO feldmark.pfaendung_faelle
        (fall_id, aktenzeichen, glaeubiger, schuldner, zustelldatum, zustellkanal,
-        status, bearbeiter_email, vertretung_email, vorgesetzte_email)
-     VALUES ($1, $2, $3, $4, $5, $6, 'Eingegangen', $7, $8, $9)`,
+        status, bearbeiter_email, vertretung_email, vorgesetzte_email, dokumenttyp)
+     VALUES ($1, $2, $3, $4, $5, $6, 'Eingegangen', $7, $8, $9, $10)`,
     [
       fallId,
       kopf.aktenzeichen,
@@ -141,6 +141,7 @@ export async function legePfaendungsfallAn(klassifikation, eingang) {
       eingang.bearbeiter_email,
       eingang.vertretung_email ?? null,
       eingang.vorgesetzte_email ?? null,
+      klassifikation.dokumenttyp,
     ]
   );
   // forderung_gesamt_eur/konfidenz_betrag wurden bisher an dieser Stelle
@@ -256,6 +257,14 @@ export async function protokolliereVierAugenAntwortUebersteuert(fallId, eingangs
   await protokolliere("feldmark.auskunftsersuchen_protokoll", fallId, "vier_augen_antwort_uebersteuert", eingangsdatumIso);
 }
 
+export async function protokolliereErklaerungAbgelehnt(fallId, eingangsdatumIso) {
+  await protokolliere("feldmark.pfaendung_protokoll", fallId, "erklaerung_abgelehnt", eingangsdatumIso);
+}
+
+export async function protokolliereAntwortAbgelehnt(fallId, eingangsdatumIso) {
+  await protokolliere("feldmark.auskunftsersuchen_protokoll", fallId, "antwort_abgelehnt", eingangsdatumIso);
+}
+
 /** Ereignis "Erinnerung erhalten" gegen einen bereits bestehenden Fall -
  * legt KEINEN neuen Fall an. */
 export async function protokolliereErinnerungErhalten(tabelle, fallId, eingangsdatumIso) {
@@ -303,7 +312,7 @@ export async function listeOffeneFaelle() {
   const pfaendung = await pool.query(
     `SELECT fall_id, aktenzeichen, glaeubiger AS partei_a, schuldner AS partei_b,
             to_char(zustelldatum, 'YYYY-MM-DD') AS eingangsdatum, 14 AS antwortfrist_tage, zustellkanal,
-            status, erinnerungen_gesendet, 'pfaendungsschreiben' AS dokumenttyp
+            status, erinnerungen_gesendet, dokumenttyp
      FROM   feldmark.pfaendung_faelle
      WHERE  status NOT IN ('Erklaerung versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis')`
   );
@@ -340,7 +349,7 @@ export async function ermittleFallMitErweiterung(fallId) {
   const { rows } = await getPool().query(
     `SELECT f.fall_id, f.aktenzeichen, f.glaeubiger, f.schuldner,
             to_char(f.zustelldatum, 'YYYY-MM-DD') AS zustelldatum, f.zustellkanal, f.status,
-            e.forderung_gesamt_eur, e.konfidenz_betrag, e.ist_p_konto,
+            e.forderung_gesamt_eur, e.konfidenz_betrag, e.ist_p_konto, e.p_konto_geprueft,
             e.p_konto_freibetrag_erhoehung, e.p_konto_benachrichtigt_am,
             e.guthaben_eur, e.guthaben_erfasst_am, e.guthaben_erfasst_von, e.erklaerung_text,
             e.erklaerung_erzeugt_am, e.erklaerung_freigegeben_von, e.erklaerung_freigegeben_am,
@@ -373,20 +382,50 @@ export async function findeAndereOffenePfaendungen(schuldner, fallIdAusschliesse
   return rows;
 }
 
-/** Aktualisiert die manuell erfassten Felder (P-Konto-Status, Guthaben). */
-export async function aktualisiereErweiterung(fallId, { istPKonto, freibetragErhoehungEur, guthabenEur, guthabenErfasstVon }) {
+/**
+ * Aktualisiert die manuell erfassten Felder (P-Konto-Status, Guthaben).
+ *
+ * Code-Review-Fund 2026-08-27: ist_p_konto ist NOT NULL DEFAULT false, und
+ * die Checkbox im Formular startet ebenfalls ungecheckt - "kein P-Konto"
+ * und "noch nicht geprueft" waren dadurch nicht unterscheidbar. Ein
+ * Mitarbeiter, der nur das Guthaben speichert, BEVOR er den P-Konto-Status
+ * ueberhaupt geprueft hat, loeste dadurch ungewollt die "kein P-Konto"-
+ * Benachrichtigung aus. Neue Spalte p_konto_geprueft traegt jetzt die
+ * eigentliche Tri-State-Information; ist_p_konto bleibt unangetastet
+ * (kein Eingriff in die bestehende COALESCE-Logik fuer guthaben_eur/
+ * p_konto_freibetrag_erhoehung - siehe KONTEXT.md fuer die bekannte,
+ * bewusst zurueckgestellte Einschraenkung dort).
+ *
+ * Gibt { zeile, wurdeGeradeGeprueft } zurueck statt nur der Zeile: die
+ * WITH-CTE liest den P-Konto-Geprueft-Stand VOR dem UPDATE mit, damit der
+ * Aufrufer (index.js) den Uebergang false -> true in genau diesem Aufruf
+ * erkennen kann - nur DANN darf die P-Konto-Benachrichtigung feuern, nicht
+ * schon deshalb, weil ist_p_konto zufaellig false ist.
+ */
+export async function aktualisiereErweiterung(
+  fallId,
+  { istPKonto, freibetragErhoehungEur, guthabenEur, guthabenErfasstVon, pKontoGeprueft }
+) {
   const { rows } = await getPool().query(
-    `UPDATE feldmark.pfaendung_erweiterung
-     SET    ist_p_konto = COALESCE($2, ist_p_konto),
-            p_konto_freibetrag_erhoehung = COALESCE($3, p_konto_freibetrag_erhoehung),
-            guthaben_eur = COALESCE($4, guthaben_eur),
-            guthaben_erfasst_am = CASE WHEN $4 IS NOT NULL THEN now() ELSE guthaben_erfasst_am END,
-            guthaben_erfasst_von = CASE WHEN $4 IS NOT NULL THEN $5 ELSE guthaben_erfasst_von END
-     WHERE  fall_id = $1
-     RETURNING *`,
-    [fallId, istPKonto ?? null, freibetragErhoehungEur ?? null, guthabenEur ?? null, guthabenErfasstVon ?? null]
+    `WITH vorher AS (
+       SELECT p_konto_geprueft FROM feldmark.pfaendung_erweiterung WHERE fall_id = $1
+     )
+     UPDATE feldmark.pfaendung_erweiterung e
+     SET    ist_p_konto = COALESCE($2, e.ist_p_konto),
+            p_konto_freibetrag_erhoehung = COALESCE($3, e.p_konto_freibetrag_erhoehung),
+            guthaben_eur = COALESCE($4, e.guthaben_eur),
+            guthaben_erfasst_am = CASE WHEN $4 IS NOT NULL THEN now() ELSE e.guthaben_erfasst_am END,
+            guthaben_erfasst_von = CASE WHEN $4 IS NOT NULL THEN $5 ELSE e.guthaben_erfasst_von END,
+            p_konto_geprueft = e.p_konto_geprueft OR COALESCE($6, false)
+     FROM   vorher
+     WHERE  e.fall_id = $1
+     RETURNING e.*, vorher.p_konto_geprueft AS p_konto_geprueft_vorher`,
+    [fallId, istPKonto ?? null, freibetragErhoehungEur ?? null, guthabenEur ?? null, guthabenErfasstVon ?? null, pKontoGeprueft ?? null]
   );
-  return rows[0] ?? null;
+  if (!rows[0]) return null;
+  const { p_konto_geprueft_vorher, ...zeile } = rows[0];
+  const wurdeGeradeGeprueft = pKontoGeprueft === true && p_konto_geprueft_vorher === false;
+  return { zeile, wurdeGeradeGeprueft };
 }
 
 /** Markiert die P-Konto-Benachrichtigung als versandt (Zeitstempel = Nachweis). */
@@ -475,6 +514,34 @@ export async function bestaetigeVersand(fallId, versendetVon) {
   if (!rows[0]) return null;
   await pool.query(
     `UPDATE feldmark.pfaendung_faelle SET status = 'Erklaerung versandt', letzte_aktion_am = now() WHERE fall_id = $1`,
+    [fallId]
+  );
+  return rows[0];
+}
+
+/**
+ * Ablehnung: Sachbearbeitung prueft die erzeugte Erklaerung und lehnt sie
+ * bewusst ab, statt sie freizugeben (z.B. falsche Angaben) - macht den
+ * bisher stillen Geprueft-Reset aus speichereErklaerung() (siehe dort) zu
+ * einer expliziten, protokollierten Entscheidung, statt dass eine neue
+ * Erklaerung erzeugt werden muesste, um dieselbe Wirkung zu erreichen.
+ * Setzt einen evtl. vorhandenen Freigabe-Nachweis zurueck, der Erklaerungs-
+ * text selbst bleibt erhalten (kann erneut freigegeben oder ueber "Drittschuldner-
+ * erklaerung erzeugen" neu erstellt werden). Nicht mehr moeglich, sobald der
+ * Versand bereits bestaetigt wurde - das waere nicht mehr rueckholbar.
+ */
+export async function lehneErklaerungAb(fallId) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `UPDATE feldmark.pfaendung_erweiterung
+     SET    erklaerung_freigegeben_von = NULL, erklaerung_freigegeben_am = NULL
+     WHERE  fall_id = $1 AND erklaerung_text IS NOT NULL AND erklaerung_versendet_am IS NULL
+     RETURNING *`,
+    [fallId]
+  );
+  if (!rows[0]) return null;
+  await pool.query(
+    `UPDATE feldmark.pfaendung_faelle SET status = 'Geprueft', letzte_aktion_am = now() WHERE fall_id = $1`,
     [fallId]
   );
   return rows[0];
@@ -593,6 +660,25 @@ export async function bestaetigeAntwortVersand(fallId, versendetVon) {
   if (!rows[0]) return null;
   await pool.query(
     `UPDATE feldmark.auskunftsersuchen_faelle SET status = 'Antwort versandt', letzte_aktion_am = now() WHERE fall_id = $1`,
+    [fallId]
+  );
+  return rows[0];
+}
+
+/** Ablehnung der Antwort - identisches Muster wie lehneErklaerungAb() auf
+ * der Pfaendungsseite, siehe dortiger Kommentar. */
+export async function lehneAntwortAb(fallId) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `UPDATE feldmark.auskunftsersuchen_erweiterung
+     SET    antwort_freigegeben_von = NULL, antwort_freigegeben_am = NULL
+     WHERE  fall_id = $1 AND antwort_text IS NOT NULL AND antwort_versendet_am IS NULL
+     RETURNING *`,
+    [fallId]
+  );
+  if (!rows[0]) return null;
+  await pool.query(
+    `UPDATE feldmark.auskunftsersuchen_faelle SET status = 'Geprueft', letzte_aktion_am = now() WHERE fall_id = $1`,
     [fallId]
   );
   return rows[0];
@@ -782,7 +868,7 @@ export async function holeAktivitaetsfeed(limit = 20) {
   const { rows } = await getPool().query(
     `(SELECT p.fall_id, p.ereignis, p.erzeugt_am, p.empfaenger,
              f.glaeubiger AS partei_a, f.schuldner AS partei_b,
-             'pfaendungsschreiben' AS dokumenttyp
+             f.dokumenttyp
       FROM   feldmark.pfaendung_protokoll p
       JOIN   feldmark.pfaendung_faelle f ON f.fall_id = p.fall_id)
      UNION ALL

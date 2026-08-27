@@ -25,6 +25,8 @@ export const EREIGNIS_LABEL = {
   vier_augen_antwort_uebersteuert: { label: "Vier-Augen-Warnung übersteuert", farbe: "oxblood" },
   kontosperre_ausgeloest: { label: "Kontosperre-Entscheidung: Sperre ausgelöst", farbe: "oxblood" },
   kontosperre_nicht_ausgeloest: { label: "Kontosperre-Entscheidung: keine Sperre", farbe: "moss" },
+  erklaerung_abgelehnt: { label: "Drittschuldnererklärung abgelehnt", farbe: "oxblood" },
+  antwort_abgelehnt: { label: "Antwort abgelehnt", farbe: "oxblood" },
 };
 
 /** Stempel-Inhalt aus einem Verarbeitungsergebnis von POST /api/klassifizieren. */

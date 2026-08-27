@@ -243,28 +243,36 @@ app.get("/api/faelle/:fallId/erweiterung", async (req, res) => {
 });
 
 // Manuelle Erfassung von P-Konto-Status und Guthaben (keine Kernbank-API
-// angebunden, siehe Ergaenzungskonzept Annahme A7). Wird bei dieser
-// Erfassung erstmals bekannt, dass KEIN P-Konto vorliegt, loest das
-// System die P-Konto-Benachrichtigung sofort aus, statt sie einem
-// Mitarbeiter separat zu ueberlassen - das ist der eigentliche
-// Automatisierungsgewinn (siehe Ergaenzungskonzept Abschnitt 1.2).
+// angebunden, siehe Ergaenzungskonzept Annahme A7). Die P-Konto-
+// Benachrichtigung feuert NICHT mehr allein deshalb, weil ist_p_konto
+// zufaellig (default) false ist - sondern nur, wenn p_konto_geprueft in
+// GENAU diesem Aufruf von false auf true wechselt (siehe
+// db.aktualisiereErweiterung(), Code-Review-Fund 2026-08-27: sonst haette
+// ein Mitarbeiter, der nur das Guthaben speichert bevor er den P-Konto-
+// Status ueberhaupt geprueft hat, die Benachrichtigung ungewollt ausgeloest).
 app.put("/api/faelle/:fallId/erweiterung", async (req, res) => {
   try {
-    const { ist_p_konto, freibetrag_erhoehung_eur, guthaben_eur, guthaben_erfasst_von } = req.body;
-    const aktualisiert = await db.aktualisiereErweiterung(req.params.fallId, {
+    const { ist_p_konto, freibetrag_erhoehung_eur, guthaben_eur, guthaben_erfasst_von, p_konto_geprueft } = req.body;
+    const ergebnis = await db.aktualisiereErweiterung(req.params.fallId, {
       istPKonto: typeof ist_p_konto === "boolean" ? ist_p_konto : null,
       freibetragErhoehungEur: freibetrag_erhoehung_eur ?? null,
       guthabenEur: guthaben_eur ?? null,
       guthabenErfasstVon: guthaben_erfasst_von ?? null,
+      pKontoGeprueft: p_konto_geprueft === true ? true : null,
     });
-    if (!aktualisiert) return res.status(404).json({ fehler: "Fall nicht gefunden." });
+    if (!ergebnis) return res.status(404).json({ fehler: "Fall nicht gefunden." });
 
+    const { zeile, wurdeGeradeGeprueft } = ergebnis;
     let benachrichtigungAusgeloest = false;
-    if (aktualisiert.ist_p_konto === false && !aktualisiert.p_konto_benachrichtigt_am) {
+    if (wurdeGeradeGeprueft && zeile.ist_p_konto === false && !zeile.p_konto_benachrichtigt_am) {
       await db.markierePKontoBenachrichtigt(req.params.fallId);
       benachrichtigungAusgeloest = true;
+      // Ohne diese Nachfuehrung wuerde die Antwort noch den Stand VOR der
+      // Benachrichtigung tragen - die UI-Bestaetigungsmeldung waere erst
+      // nach einem Neuladen sichtbar (Code-Review-Fund 2026-08-27).
+      zeile.p_konto_benachrichtigt_am = new Date().toISOString();
     }
-    res.json({ erweiterung: aktualisiert, p_konto_benachrichtigung_ausgeloest: benachrichtigungAusgeloest });
+    res.json({ erweiterung: zeile, p_konto_benachrichtigung_ausgeloest: benachrichtigungAusgeloest });
   } catch (fehler) {
     console.error(`[PUT /api/faelle/${req.params.fallId}/erweiterung]`, fehler);
     res.status(500).json({ fehler: String(fehler.message || fehler) });
@@ -349,6 +357,28 @@ app.post("/api/faelle/:fallId/erklaerung/versenden", async (req, res) => {
     res.json({ erweiterung: ergebnis });
   } catch (fehler) {
     console.error(`[POST /api/faelle/${req.params.fallId}/erklaerung/versenden]`, fehler);
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+// Ablehnung: Sachbearbeitung prueft die erzeugte Erklaerung und lehnt sie
+// bewusst ab, statt sie freizugeben - macht den bisher stillen Geprueft-
+// Reset aus speichereErklaerung() zu einer expliziten, protokollierten
+// Entscheidung (siehe Kommentar bei db.lehneErklaerungAb()). Nicht mehr
+// moeglich, sobald der Versand bereits bestaetigt wurde.
+app.post("/api/faelle/:fallId/erklaerung/ablehnen", async (req, res) => {
+  try {
+    const fall = await db.ermittleFallMitErweiterung(req.params.fallId);
+    if (!fall) return res.status(404).json({ fehler: "Fall nicht gefunden." });
+
+    const ergebnis = await db.lehneErklaerungAb(req.params.fallId);
+    if (!ergebnis) {
+      return res.status(404).json({ fehler: "Fall nicht gefunden, noch keine Erklaerung erzeugt, oder bereits versandt." });
+    }
+    await db.protokolliereErklaerungAbgelehnt(req.params.fallId, fall.zustelldatum);
+    res.json({ erweiterung: ergebnis });
+  } catch (fehler) {
+    console.error(`[POST /api/faelle/${req.params.fallId}/erklaerung/ablehnen]`, fehler);
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }
 });
@@ -456,6 +486,25 @@ app.post("/api/faelle/:fallId/antwort/versenden", async (req, res) => {
     res.json({ erweiterung: ergebnis });
   } catch (fehler) {
     console.error(`[POST /api/faelle/${req.params.fallId}/antwort/versenden]`, fehler);
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+// Ablehnung der Antwort - identisches Muster wie /erklaerung/ablehnen auf
+// der Pfaendungsseite.
+app.post("/api/faelle/:fallId/antwort/ablehnen", async (req, res) => {
+  try {
+    const fall = await db.ermittleAuskunftsersuchenMitErweiterung(req.params.fallId);
+    if (!fall) return res.status(404).json({ fehler: "Fall nicht gefunden." });
+
+    const ergebnis = await db.lehneAntwortAb(req.params.fallId);
+    if (!ergebnis) {
+      return res.status(404).json({ fehler: "Fall nicht gefunden, noch keine Antwort erzeugt, oder bereits versandt." });
+    }
+    await db.protokolliereAntwortAbgelehnt(req.params.fallId, fall.eingangsdatum);
+    res.json({ erweiterung: ergebnis });
+  } catch (fehler) {
+    console.error(`[POST /api/faelle/${req.params.fallId}/antwort/ablehnen]`, fehler);
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }
 });

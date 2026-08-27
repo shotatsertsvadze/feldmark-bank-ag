@@ -112,7 +112,7 @@ export default function Falluebersicht({ reloadSignal }) {
         ) : (
           <div className="fallliste">
             {gefiltert.map((f) => {
-              const istPfaendungsblock = f.dokumenttyp === "pfaendungsschreiben";
+              const istPfaendungsblock = PFAENDUNGSBLOCK.includes(f.dokumenttyp);
               const istAufgeklappt = aufgeklapptFallId === f.fall_id;
               return (
                 <div key={f.fall_id}>

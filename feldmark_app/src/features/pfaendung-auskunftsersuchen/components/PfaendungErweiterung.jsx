@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  erklaerungAblehnen,
   erklaerungErzeugen,
   erklaerungFreigeben,
   erklaerungVersenden,
@@ -50,8 +51,13 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
   const [versendetVon, setVersendetVon] = useState("");
   const [bestaetigtVersand, setBestaetigtVersand] = useState(false);
   const [zeigtModal, setZeigtModal] = useState(false);
+  const [lehntAb, setLehntAb] = useState(false);
 
   const [istPKonto, setIstPKonto] = useState(false);
+  // Tri-State getrennt von istPKonto: "noch nicht geprueft" ist ein
+  // eigener Zustand, nicht dasselbe wie "geprueft, kein P-Konto" (Code-
+  // Review-Fund 2026-08-27 - siehe Kommentar in server/db.js).
+  const [pKontoGeprueft, setPKontoGeprueft] = useState(false);
   const [freibetragErhoehung, setFreibetragErhoehung] = useState("");
   const [guthaben, setGuthaben] = useState("");
   const [guthabenErfasstVon, setGuthabenErfasstVon] = useState("");
@@ -65,6 +71,7 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
         if (abgebrochen) return;
         setErw(f);
         setIstPKonto(!!f.ist_p_konto);
+        setPKontoGeprueft(!!f.p_konto_geprueft);
         setFreibetragErhoehung(f.p_konto_freibetrag_erhoehung && Number(f.p_konto_freibetrag_erhoehung) !== 0 ? String(f.p_konto_freibetrag_erhoehung) : "");
         setGuthaben(f.guthaben_eur != null ? String(f.guthaben_eur) : "");
         setGuthabenErfasstVon(f.guthaben_erfasst_von || "");
@@ -99,6 +106,7 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
         freibetragErhoehungEur: freibetragErhoehung === "" ? null : Number(freibetragErhoehung),
         guthabenEur: guthaben === "" ? null : Number(guthaben),
         guthabenErfasstVon: guthabenErfasstVon.trim() === "" ? null : guthabenErfasstVon.trim(),
+        pKontoGeprueft,
       });
       setErw(erweiterung);
       return { ok: true, p_konto_benachrichtigung_ausgeloest };
@@ -160,6 +168,30 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
     }
   }
 
+  // Macht den bisher stillen Geprueft-Reset aus erklaerungErstellen()/
+  // speichereErklaerung() zu einer expliziten, protokollierten Entscheidung -
+  // fuer den Fall, dass die erzeugte Erklaerung inhaltlich nicht stimmt und
+  // NICHT freigegeben werden soll. Der Erklaerungstext bleibt erhalten
+  // (Modal schliesst sich, "Erklärung anzeigen" fuehrt zur selben Fassung
+  // zurueck) - Ablehnung heisst hier "nicht in dieser Form versenden", nicht
+  // "Text loeschen". Serverseitig ohnehin nicht mehr moeglich, sobald der
+  // Versand schon bestaetigt wurde.
+  async function ablehnen() {
+    setLehntAb(true);
+    setFehler(null);
+    try {
+      const erweiterung = await erklaerungAblehnen(fallId);
+      setErw(erweiterung);
+      setVierAugenWarnung(null);
+      setZeigtModal(false);
+      onFallGeaendert?.();
+    } catch (e) {
+      setFehler(String(e.message || e));
+    } finally {
+      setLehntAb(false);
+    }
+  }
+
   async function versandBestaetigen() {
     if (!versendetVon.trim()) return;
     setBestaetigtVersand(true);
@@ -198,9 +230,38 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
 
       <div className="eingangsform">
         <div className="feld">
-          <label>
-            <input type="checkbox" checked={istPKonto} onChange={(e) => setIstPKonto(e.target.checked)} /> P-Konto
-          </label>
+          <label>P-Konto-Status</label>
+          <div className="pkonto-status">
+            {!pKontoGeprueft && (
+              <label className="pkonto-status__ungeprueft">
+                <input type="radio" name={`pkonto-${fallId}`} checked readOnly disabled /> Noch nicht geprüft
+              </label>
+            )}
+            <label>
+              <input
+                type="radio"
+                name={`pkonto-${fallId}`}
+                checked={pKontoGeprueft && !istPKonto}
+                onChange={() => {
+                  setIstPKonto(false);
+                  setPKontoGeprueft(true);
+                }}
+              />{" "}
+              Kein P-Konto
+            </label>
+            <label>
+              <input
+                type="radio"
+                name={`pkonto-${fallId}`}
+                checked={pKontoGeprueft && istPKonto}
+                onChange={() => {
+                  setIstPKonto(true);
+                  setPKontoGeprueft(true);
+                }}
+              />{" "}
+              P-Konto vorhanden
+            </label>
+          </div>
         </div>
         {istPKonto && (
           <div className="feld feld--optional">
@@ -273,6 +334,14 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
 
             <div className="erweiterung__erklaerung">
               <textarea readOnly value={erw.erklaerung_text} rows={14} />
+
+              {!istVersendet && (
+                <div className="erweiterung__aktionen">
+                  <button className="nav-tabs__btn nav-tabs__btn--ablehnen" onClick={ablehnen} disabled={lehntAb}>
+                    {lehntAb ? "Lehnt ab …" : "Ablehnen"}
+                  </button>
+                </div>
+              )}
 
               {!istFreigegeben && (
                 <div className="erweiterung__aktionen">

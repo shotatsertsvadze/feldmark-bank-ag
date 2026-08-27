@@ -42,6 +42,17 @@ CREATE TABLE feldmark.pfaendung_faelle (
                                             'Abgeschlossen mit Fristversaeumnis')),
     -- Das Feld traegt die Idempotenz: was hier drinsteht, wird nicht wiederholt.
     erinnerungen_gesendet text[]      NOT NULL DEFAULT '{}',
+    -- Subtyp aus PFAENDUNGSBLOCK_TYPEN (mistral.js) - alle drei teilen sich
+    -- diese Tabelle. Code-Review-Fund 2026-08-27: db.js setzte diesen Wert
+    -- bisher fuer JEDE Zeile hart auf 'pfaendungsschreiben' statt die echte
+    -- Klassifikation zu speichern (listeOffeneFaelle()/holeAktivitaetsfeed()
+    -- gaben den Wert nie zurueck). Default hier nur fuer eine frische
+    -- Provisionierung aus dieser Datei relevant - legePfaendungsfallAn()
+    -- setzt den echten Wert immer explizit.
+    dokumenttyp           text        NOT NULL DEFAULT 'pfaendungsschreiben'
+                          CHECK (dokumenttyp IN ('pfaendungsschreiben',
+                                                 'einziehungsverfuegung',
+                                                 'ueberweisungsverfuegung')),
     bearbeiter_email      text        NOT NULL,
     vertretung_email      text,
     vorgesetzte_email     text,
