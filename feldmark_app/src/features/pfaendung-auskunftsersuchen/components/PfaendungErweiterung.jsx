@@ -309,7 +309,7 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
         <button className="nav-tabs__btn" onClick={speichern} disabled={speichertErw}>
           {speichertErw ? "Speichert …" : "Speichern"}
         </button>
-        <button className="nav-tabs__btn" onClick={erklaerungErstellen} disabled={erzeugtErklaerung || guthaben === ""}>
+        <button className="nav-tabs__btn nav-tabs__btn--primary" onClick={erklaerungErstellen} disabled={erzeugtErklaerung || guthaben === ""}>
           {erzeugtErklaerung ? "Erzeugt …" : "Drittschuldnererklärung erzeugen"}
         </button>
         {erw.erklaerung_text && (
@@ -354,7 +354,7 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
                       setVierAugenWarnung(null);
                     }}
                   />
-                  <button className="nav-tabs__btn" onClick={() => freigeben(false)} disabled={gibtFrei || !freigebenName.trim()}>
+                  <button className="nav-tabs__btn nav-tabs__btn--primary" onClick={() => freigeben(false)} disabled={gibtFrei || !freigebenName.trim()}>
                     {gibtFrei ? "Gibt frei …" : "Freigeben"}
                   </button>
                 </div>
@@ -384,7 +384,7 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
                       value={versendetVon}
                       onChange={(e) => setVersendetVon(e.target.value)}
                     />
-                    <button className="nav-tabs__btn" onClick={versandBestaetigen} disabled={bestaetigtVersand || !versendetVon.trim()}>
+                    <button className="nav-tabs__btn nav-tabs__btn--primary" onClick={versandBestaetigen} disabled={bestaetigtVersand || !versendetVon.trim()}>
                       {bestaetigtVersand ? "Bestätigt …" : "Versand bestätigen"}
                     </button>
                   </div>

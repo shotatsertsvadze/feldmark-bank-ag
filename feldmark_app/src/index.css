@@ -299,6 +299,20 @@ select {
   background: var(--oxblood-bg);
 }
 
+/* Primaeraktion je Formular-/Aktionsgruppe (z.B. "Erklaerung erzeugen",
+   "Freigeben", "Versand bestaetigen") - gefuellt statt umrandet, damit
+   unter mehreren gleichwertig aussehenden Buttons der naechste sinnvolle
+   Schritt erkennbar ist. Sekundaeraktionen (Speichern, Anzeigen, "Trotzdem
+   freigeben") bleiben bewusst im neutralen Outline-Stil. */
+.nav-tabs__btn--primary {
+  background: var(--brand);
+  color: #fff;
+}
+
+.nav-tabs__btn--primary:hover {
+  background: var(--brand-deep);
+}
+
 section.view {
   animation: view-in 0.32s cubic-bezier(0.16, 0.8, 0.3, 1);
 }

@@ -79,7 +79,7 @@ export default function DatendiskrepanzFall({ fallId, onFallGeaendert }) {
             onChange={(e) => setReaktiviertVon(e.target.value)}
           />
           <button
-            className="nav-tabs__btn"
+            className="nav-tabs__btn nav-tabs__btn--primary"
             onClick={reaktivieren}
             disabled={reaktiviert || !schuldnerName.trim() || !reaktiviertVon.trim()}
           >

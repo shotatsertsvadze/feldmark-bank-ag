@@ -240,7 +240,7 @@ export default function AuskunftsersuchenErweiterung({ fallId, onFallGeaendert }
         <button className="nav-tabs__btn" onClick={pruefungSpeichern} disabled={speichertPruefung}>
           {speichertPruefung ? "Speichert …" : "Prüfung speichern"}
         </button>
-        <button className="nav-tabs__btn" onClick={antwortErstellen} disabled={erzeugtAntwort || ausgewaehltePunkte.length === 0}>
+        <button className="nav-tabs__btn nav-tabs__btn--primary" onClick={antwortErstellen} disabled={erzeugtAntwort || ausgewaehltePunkte.length === 0}>
           {erzeugtAntwort ? "Erzeugt …" : "Antwort erzeugen"}
         </button>
         {erw.antwort_text && (
@@ -287,7 +287,7 @@ export default function AuskunftsersuchenErweiterung({ fallId, onFallGeaendert }
           </div>
         </div>
         <div className="erweiterung__aktionen">
-          <button className="nav-tabs__btn" onClick={sperreSpeichern} disabled={speichertSperre || sperreVorhanden === null || !sperreEntschiedenVon.trim()}>
+          <button className="nav-tabs__btn nav-tabs__btn--primary" onClick={sperreSpeichern} disabled={speichertSperre || sperreVorhanden === null || !sperreEntschiedenVon.trim()}>
             {speichertSperre ? "Speichert …" : "Entscheidung speichern"}
           </button>
         </div>
@@ -325,7 +325,7 @@ export default function AuskunftsersuchenErweiterung({ fallId, onFallGeaendert }
                       setVierAugenWarnung(null);
                     }}
                   />
-                  <button className="nav-tabs__btn" onClick={() => freigeben(false)} disabled={gibtFrei || !freigebenName.trim()}>
+                  <button className="nav-tabs__btn nav-tabs__btn--primary" onClick={() => freigeben(false)} disabled={gibtFrei || !freigebenName.trim()}>
                     {gibtFrei ? "Gibt frei …" : "Freigeben"}
                   </button>
                 </div>
@@ -355,7 +355,7 @@ export default function AuskunftsersuchenErweiterung({ fallId, onFallGeaendert }
                       value={versendetVon}
                       onChange={(e) => setVersendetVon(e.target.value)}
                     />
-                    <button className="nav-tabs__btn" onClick={versandBestaetigen} disabled={bestaetigtVersand || !versendetVon.trim()}>
+                    <button className="nav-tabs__btn nav-tabs__btn--primary" onClick={versandBestaetigen} disabled={bestaetigtVersand || !versendetVon.trim()}>
                       {bestaetigtVersand ? "Bestätigt …" : "Versand bestätigen"}
                     </button>
                   </div>
