@@ -9,7 +9,8 @@
     "dev:server": "node server/index.js",
     "dev:client": "vite",
     "build": "vite build",
-    "preview": "vite preview --port 5191"
+    "preview": "vite preview --port 5191",
+    "test": "node --test server/**/*.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

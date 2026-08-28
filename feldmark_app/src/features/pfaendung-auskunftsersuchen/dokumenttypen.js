@@ -27,6 +27,20 @@ export const EREIGNIS_LABEL = {
   kontosperre_nicht_ausgeloest: { label: "Kontosperre-Entscheidung: keine Sperre", farbe: "moss" },
   erklaerung_abgelehnt: { label: "Drittschuldnererklärung abgelehnt", farbe: "oxblood" },
   antwort_abgelehnt: { label: "Antwort abgelehnt", farbe: "oxblood" },
+  // Audit-Trail-Nachtrag (RALPH-PROGRESS.md, Backlog #1) - diese Ereignisse
+  // wurden bisher an keiner Stelle protokolliert, siehe db.js-Kommentare an
+  // den jeweiligen Fundstellen.
+  erklaerung_erzeugt: { label: "Drittschuldnererklärung erzeugt", farbe: "slate" },
+  erklaerung_freigegeben: { label: "Drittschuldnererklärung freigegeben", farbe: "slate" },
+  erklaerung_versendet: { label: "Drittschuldnererklärung versendet", farbe: "moss" },
+  antwort_erzeugt: { label: "Antwort erzeugt", farbe: "slate" },
+  antwort_freigegeben: { label: "Antwort freigegeben", farbe: "slate" },
+  antwort_versendet: { label: "Antwort versendet", farbe: "moss" },
+  datendiskrepanz_fristwahrend_erklaert: { label: "Fristwahrende Erklärung abgegeben", farbe: "ochre" },
+  datendiskrepanz_geschlossen_ungeklaert: { label: "Datendiskrepanz geschlossen (ungeklärt)", farbe: "oxblood" },
+  datendiskrepanz_reaktiviert: { label: "Datendiskrepanz-Fall reaktiviert", farbe: "moss" },
+  datendiskrepanz_nachfassung_1_gesendet: { label: "Nachfassung 1 gesendet (Datendiskrepanz)", farbe: "ochre" },
+  datendiskrepanz_nachfassung_2_gesendet: { label: "Nachfassung 2 gesendet (Datendiskrepanz)", farbe: "ochre" },
 };
 
 /** Stempel-Inhalt aus einem Verarbeitungsergebnis von POST /api/klassifizieren. */

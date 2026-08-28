@@ -450,7 +450,7 @@ export async function markierePKontoBenachrichtigt(fallId) {
  * ANDERER Fall desselben Schuldners wuerde bei der Rang-/Pflichtangabe-3-
  * Berechnung eine zu kurze Glaeubigerliste bekommen (Fund aus dem
  * autonomen Nacht-Review, siehe KONTEXT.md). */
-export async function speichereErklaerung(fallId, text) {
+export async function speichereErklaerung(fallId, text, eingangsdatumIso) {
   const pool = getPool();
   await pool.query(
     `UPDATE feldmark.pfaendung_erweiterung
@@ -466,6 +466,12 @@ export async function speichereErklaerung(fallId, text) {
      WHERE  fall_id = $1 AND status IN ('Erklaerung freigegeben', 'Erklaerung versandt')`,
     [fallId]
   );
+  // Audit-Fund (RALPH-PROGRESS.md, Backlog #1): dieser Aufruf aenderte bisher
+  // teils den Fall-Status (impliziter Geprueft-Reset), ohne je ein
+  // Protokoll-Ereignis zu schreiben - unabhaengig vom Aufrufer (Route oder
+  // Datendiskrepanz-Sweep) jetzt hier verankert, statt auf Disziplin am
+  // Aufrufort zu vertrauen.
+  await protokolliere("feldmark.pfaendung_protokoll", fallId, "erklaerung_erzeugt", eingangsdatumIso);
 }
 
 /**
@@ -479,7 +485,7 @@ export async function speichereErklaerung(fallId, text) {
  * 'Erklaerung versandt' aus), bis bestaetigeVersand() den zweiten Schritt
  * abschliesst.
  */
-export async function gibErklaerungFrei(fallId, freigegebenVon) {
+export async function gibErklaerungFrei(fallId, freigegebenVon, eingangsdatumIso) {
   const pool = getPool();
   const { rows } = await pool.query(
     `UPDATE feldmark.pfaendung_erweiterung
@@ -493,6 +499,10 @@ export async function gibErklaerungFrei(fallId, freigegebenVon) {
     `UPDATE feldmark.pfaendung_faelle SET status = 'Erklaerung freigegeben', letzte_aktion_am = now() WHERE fall_id = $1`,
     [fallId]
   );
+  // Audit-Fund (RALPH-PROGRESS.md, Backlog #1): frueher nur bei Vier-Augen-
+  // Uebersteuerung ein Ereignis (siehe Route) - der reguläre Freigabefall
+  // (keine Uebersteuerung noetig) blieb bisher komplett unprotokolliert.
+  await protokolliere("feldmark.pfaendung_protokoll", fallId, "erklaerung_freigegeben", eingangsdatumIso);
   return rows[0];
 }
 
@@ -502,7 +512,7 @@ export async function gibErklaerungFrei(fallId, freigegebenVon) {
  * und faellt aus der n8n-Fristueberwachung heraus - siehe Kommentar bei
  * gibErklaerungFrei() fuer die Begruendung der Trennung.
  */
-export async function bestaetigeVersand(fallId, versendetVon) {
+export async function bestaetigeVersand(fallId, versendetVon, eingangsdatumIso) {
   const pool = getPool();
   const { rows } = await pool.query(
     `UPDATE feldmark.pfaendung_erweiterung
@@ -516,6 +526,9 @@ export async function bestaetigeVersand(fallId, versendetVon) {
     `UPDATE feldmark.pfaendung_faelle SET status = 'Erklaerung versandt', letzte_aktion_am = now() WHERE fall_id = $1`,
     [fallId]
   );
+  // Audit-Fund (RALPH-PROGRESS.md, Backlog #1): der irreversible Abschluss-
+  // Schritt des gesamten Ast-B-Flows blieb bisher unprotokolliert.
+  await protokolliere("feldmark.pfaendung_protokoll", fallId, "erklaerung_versendet", eingangsdatumIso);
   return rows[0];
 }
 
@@ -607,7 +620,7 @@ export async function aktualisiereAuskunftsersuchenErweiterung(
  * Antwort zurueck und den Fall-Status auf 'Geprueft', falls er bereits bei
  * 'Antwort freigegeben'/'Antwort versandt' stand - identische Begruendung
  * wie bei speichereErklaerung() (siehe dortiger Kommentar). */
-export async function speichereAuskunftsersuchenAntwort(fallId, text) {
+export async function speichereAuskunftsersuchenAntwort(fallId, text, eingangsdatumIso) {
   const pool = getPool();
   await pool.query(
     `UPDATE feldmark.auskunftsersuchen_erweiterung
@@ -623,12 +636,14 @@ export async function speichereAuskunftsersuchenAntwort(fallId, text) {
      WHERE  fall_id = $1 AND status IN ('Antwort freigegeben', 'Antwort versandt')`,
     [fallId]
   );
+  // Audit-Fund (RALPH-PROGRESS.md, Backlog #1) - siehe speichereErklaerung().
+  await protokolliere("feldmark.auskunftsersuchen_protokoll", fallId, "antwort_erzeugt", eingangsdatumIso);
 }
 
 /** E4: Freigabe der Antwort (z.B. durch Compliance). Setzt nur den
  * Zwischenstatus 'Antwort freigegeben' - gleiche Freigabe-/Versand-
  * Trennung wie bei gibErklaerungFrei(). */
-export async function gibAntwortFrei(fallId, freigegebenVon) {
+export async function gibAntwortFrei(fallId, freigegebenVon, eingangsdatumIso) {
   const pool = getPool();
   const { rows } = await pool.query(
     `UPDATE feldmark.auskunftsersuchen_erweiterung
@@ -642,13 +657,15 @@ export async function gibAntwortFrei(fallId, freigegebenVon) {
     `UPDATE feldmark.auskunftsersuchen_faelle SET status = 'Antwort freigegeben', letzte_aktion_am = now() WHERE fall_id = $1`,
     [fallId]
   );
+  // Audit-Fund (RALPH-PROGRESS.md, Backlog #1) - siehe gibErklaerungFrei().
+  await protokolliere("feldmark.auskunftsersuchen_protokoll", fallId, "antwort_freigegeben", eingangsdatumIso);
   return rows[0];
 }
 
 /** Zweiter Schritt nach Freigabe: bestaetigt den tatsaechlichen Versand.
  * Erst hier wechselt der Fall-Status auf 'Antwort versandt' und faellt aus
  * listeOffeneFaelle() heraus. */
-export async function bestaetigeAntwortVersand(fallId, versendetVon) {
+export async function bestaetigeAntwortVersand(fallId, versendetVon, eingangsdatumIso) {
   const pool = getPool();
   const { rows } = await pool.query(
     `UPDATE feldmark.auskunftsersuchen_erweiterung
@@ -662,6 +679,8 @@ export async function bestaetigeAntwortVersand(fallId, versendetVon) {
     `UPDATE feldmark.auskunftsersuchen_faelle SET status = 'Antwort versandt', letzte_aktion_am = now() WHERE fall_id = $1`,
     [fallId]
   );
+  // Audit-Fund (RALPH-PROGRESS.md, Backlog #1) - siehe bestaetigeVersand().
+  await protokolliere("feldmark.auskunftsersuchen_protokoll", fallId, "antwort_versendet", eingangsdatumIso);
   return rows[0];
 }
 
@@ -762,12 +781,22 @@ export async function ermittleDatendiskrepanz(fallId) {
 }
 
 /** A2: eine der zwei automatischen Nachfassungen protokollieren. */
-export async function protokolliereNachfassung(fallId, nummer, text) {
+export async function protokolliereNachfassung(fallId, nummer, text, eingangsdatumIso) {
   const spalteText = nummer === 1 ? "nachfassung_1_text" : "nachfassung_2_text";
   const spalteAm = nummer === 1 ? "nachfassung_1_gesendet_am" : "nachfassung_2_gesendet_am";
   await getPool().query(
     `UPDATE feldmark.pfaendung_datendiskrepanz SET ${spalteText} = $2, ${spalteAm} = now() WHERE fall_id = $1`,
     [fallId, text]
+  );
+  // Audit-Fund (RALPH-PROGRESS.md, Backlog #1): trotz des Namens schrieb
+  // diese Funktion bisher NIE einen echten Protokoll-Eintrag (nur die
+  // Datendiskrepanz-Tabelle selbst) - der A2-Zweig war damit im Fall-Verlauf
+  // komplett unsichtbar.
+  await protokolliere(
+    "feldmark.pfaendung_protokoll",
+    fallId,
+    nummer === 1 ? "datendiskrepanz_nachfassung_1_gesendet" : "datendiskrepanz_nachfassung_2_gesendet",
+    eingangsdatumIso
   );
 }
 
@@ -777,7 +806,7 @@ export async function protokolliereNachfassung(fallId, nummer, text) {
  * Erklaerungstext selbst wird ueber speichereErklaerung() in
  * feldmark.pfaendung_erweiterung geschrieben - siehe Aufrufer im Sweep.
  */
-export async function markiereFristwahrendErklaert(fallId) {
+export async function markiereFristwahrendErklaert(fallId, eingangsdatumIso) {
   const pool = getPool();
   await pool.query(`UPDATE feldmark.pfaendung_datendiskrepanz SET fristwahrend_erklaert_am = now() WHERE fall_id = $1`, [
     fallId,
@@ -786,6 +815,10 @@ export async function markiereFristwahrendErklaert(fallId) {
     `UPDATE feldmark.pfaendung_faelle SET status = 'Klaerung offen - fristwahrend erklaert', letzte_aktion_am = now() WHERE fall_id = $1`,
     [fallId]
   );
+  // Audit-Fund (RALPH-PROGRESS.md, Backlog #1): der Statuswechsel selbst war
+  // unprotokolliert (speichereErklaerung() protokolliert nur die
+  // Texterzeugung, nicht diesen A3-spezifischen Folge-Status).
+  await protokolliere("feldmark.pfaendung_protokoll", fallId, "datendiskrepanz_fristwahrend_erklaert", eingangsdatumIso);
 }
 
 /**
@@ -809,11 +842,21 @@ export async function reaktiviereDatendiskrepanzFall(fallId, schuldnerName, von)
     fallId,
     schuldnerName,
   ]);
+  // Audit-Fund (RALPH-PROGRESS.md, Backlog #1): die Route kennt das
+  // eingangsdatum nicht (kein vorheriger Fall-Fetch noetig fuer die
+  // Reaktivierung selbst) - kleine Zusatzabfrage statt die Route unnoetig
+  // schwerer zu machen, gleiches Muster wie in entscheideSperre() oben.
+  const eingangsdatum = (
+    await pool.query(`SELECT to_char(zustelldatum, 'YYYY-MM-DD') AS d FROM feldmark.pfaendung_faelle WHERE fall_id = $1`, [
+      fallId,
+    ])
+  ).rows[0]?.d;
+  await protokolliere("feldmark.pfaendung_protokoll", fallId, "datendiskrepanz_reaktiviert", eingangsdatum);
   return rows[0];
 }
 
 /** A4b: 30 Tage ohne Antwort - Fall wird mit Vermerk geschlossen. */
-export async function schliesseDatendiskrepanzUngeklaert(fallId, grund) {
+export async function schliesseDatendiskrepanzUngeklaert(fallId, grund, eingangsdatumIso) {
   const pool = getPool();
   const { rows } = await pool.query(
     `UPDATE feldmark.pfaendung_datendiskrepanz
@@ -826,6 +869,10 @@ export async function schliesseDatendiskrepanzUngeklaert(fallId, grund) {
   await pool.query(`UPDATE feldmark.pfaendung_faelle SET status = 'Abgeschlossen', letzte_aktion_am = now() WHERE fall_id = $1`, [
     fallId,
   ]);
+  // Audit-Fund (RALPH-PROGRESS.md, Backlog #1): der A4b-Terminalzustand
+  // (30 Tage ohne Antwort) war bisher der einzige Datendiskrepanz-Ausgang
+  // ganz ohne jede Spur im Fall-Verlauf.
+  await protokolliere("feldmark.pfaendung_protokoll", fallId, "datendiskrepanz_geschlossen_ungeklaert", eingangsdatumIso);
   return rows[0];
 }
 

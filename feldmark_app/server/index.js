@@ -288,7 +288,7 @@ app.post("/api/faelle/:fallId/erklaerung", async (req, res) => {
     const ergebnis = erzeugeDrittschuldnererklaerung(fall, fall, andereOffenePfaendungen);
     if (!ergebnis.ok) return res.status(422).json({ fehler: ergebnis.grund });
 
-    await db.speichereErklaerung(fall.fall_id, ergebnis.text);
+    await db.speichereErklaerung(fall.fall_id, ergebnis.text, fall.zustelldatum);
     res.json({ erklaerung_text: ergebnis.text });
   } catch (fehler) {
     console.error(`[POST /api/faelle/${req.params.fallId}/erklaerung]`, fehler);
@@ -333,7 +333,7 @@ app.post("/api/faelle/:fallId/erklaerung/freigeben", async (req, res) => {
       });
     }
 
-    const ergebnis = await db.gibErklaerungFrei(req.params.fallId, freigegebenVon);
+    const ergebnis = await db.gibErklaerungFrei(req.params.fallId, freigegebenVon, fall.zustelldatum);
     if (!ergebnis) return res.status(404).json({ fehler: "Fall nicht gefunden oder noch keine Erklaerung erzeugt." });
     if (brauchtBestaetigung) {
       await db.protokolliereVierAugenErklaerungUebersteuert(req.params.fallId, fall.zustelldatum);
@@ -352,7 +352,9 @@ app.post("/api/faelle/:fallId/erklaerung/versenden", async (req, res) => {
   try {
     const versendetVon = req.body.versendet_von;
     if (!versendetVon) return res.status(400).json({ fehler: "versendet_von fehlt." });
-    const ergebnis = await db.bestaetigeVersand(req.params.fallId, versendetVon);
+    const fall = await db.ermittleFallMitErweiterung(req.params.fallId);
+    if (!fall) return res.status(404).json({ fehler: "Fall nicht gefunden." });
+    const ergebnis = await db.bestaetigeVersand(req.params.fallId, versendetVon, fall.zustelldatum);
     if (!ergebnis) return res.status(404).json({ fehler: "Fall nicht gefunden oder noch nicht freigegeben." });
     res.json({ erweiterung: ergebnis });
   } catch (fehler) {
@@ -427,7 +429,7 @@ app.post("/api/faelle/:fallId/antwort", async (req, res) => {
     const ergebnis = erzeugeAuskunftsersuchenAntwort(fall, fall);
     if (!ergebnis.ok) return res.status(422).json({ fehler: ergebnis.grund });
 
-    await db.speichereAuskunftsersuchenAntwort(fall.fall_id, ergebnis.text);
+    await db.speichereAuskunftsersuchenAntwort(fall.fall_id, ergebnis.text, fall.eingangsdatum);
     res.json({ antwort_text: ergebnis.text });
   } catch (fehler) {
     console.error(`[POST /api/faelle/${req.params.fallId}/antwort]`, fehler);
@@ -465,7 +467,7 @@ app.post("/api/faelle/:fallId/antwort/freigeben", async (req, res) => {
       });
     }
 
-    const ergebnis = await db.gibAntwortFrei(req.params.fallId, freigegebenVon);
+    const ergebnis = await db.gibAntwortFrei(req.params.fallId, freigegebenVon, fall.eingangsdatum);
     if (!ergebnis) return res.status(404).json({ fehler: "Fall nicht gefunden oder noch keine Antwort erzeugt." });
     if (brauchtBestaetigung) {
       await db.protokolliereVierAugenAntwortUebersteuert(req.params.fallId, fall.eingangsdatum);
@@ -481,7 +483,9 @@ app.post("/api/faelle/:fallId/antwort/versenden", async (req, res) => {
   try {
     const versendetVon = req.body.versendet_von;
     if (!versendetVon) return res.status(400).json({ fehler: "versendet_von fehlt." });
-    const ergebnis = await db.bestaetigeAntwortVersand(req.params.fallId, versendetVon);
+    const fall = await db.ermittleAuskunftsersuchenMitErweiterung(req.params.fallId);
+    if (!fall) return res.status(404).json({ fehler: "Fall nicht gefunden." });
+    const ergebnis = await db.bestaetigeAntwortVersand(req.params.fallId, versendetVon, fall.eingangsdatum);
     if (!ergebnis) return res.status(404).json({ fehler: "Fall nicht gefunden oder noch nicht freigegeben." });
     res.json({ erweiterung: ergebnis });
   } catch (fehler) {
@@ -613,22 +617,23 @@ app.post("/api/sweep/datendiskrepanz", async (req, res) => {
       if (tageSeitZustellung >= FRISTWAHREND_SPAETESTENS_TAG && !f.fristwahrend_erklaert_am) {
         const fall = await db.ermittleFallMitErweiterung(f.fall_id);
         const ergebnis = erzeugeFristwahrendeErklaerung(fall, { rueckfrage_gesendet_am: f.rueckfrage_gesendet_am });
-        await db.speichereErklaerung(f.fall_id, ergebnis.text);
-        await db.markiereFristwahrendErklaert(f.fall_id);
+        await db.speichereErklaerung(f.fall_id, ergebnis.text, f.zustelldatum);
+        await db.markiereFristwahrendErklaert(f.fall_id, f.zustelldatum);
         aktionen.push({ fall_id: f.fall_id, aktion: "fristwahrende_erklaerung_erzeugt" });
       } else if (tageSeitRueckfrage >= SCHLIESSEN_NACH_TAGEN_OHNE_ANTWORT) {
         await db.schliesseDatendiskrepanzUngeklaert(
           f.fall_id,
-          "Keine ausreichende Antwort des Glaeubigers innerhalb von 30 Tagen - Zuordnung nicht moeglich."
+          "Keine ausreichende Antwort des Glaeubigers innerhalb von 30 Tagen - Zuordnung nicht moeglich.",
+          f.zustelldatum
         );
         aktionen.push({ fall_id: f.fall_id, aktion: "geschlossen_ungeklaert" });
       } else if (tageSeitRueckfrage >= NACHFASSUNG_2_TAGE_NACH_RUECKFRAGE && !f.nachfassung_2_gesendet_am) {
         const text = erzeugeNachfassung(f, f, 2);
-        await db.protokolliereNachfassung(f.fall_id, 2, text);
+        await db.protokolliereNachfassung(f.fall_id, 2, text, f.zustelldatum);
         aktionen.push({ fall_id: f.fall_id, aktion: "nachfassung_2_gesendet" });
       } else if (tageSeitRueckfrage >= NACHFASSUNG_1_TAGE_NACH_RUECKFRAGE && !f.nachfassung_1_gesendet_am) {
         const text = erzeugeNachfassung(f, f, 1);
-        await db.protokolliereNachfassung(f.fall_id, 1, text);
+        await db.protokolliereNachfassung(f.fall_id, 1, text, f.zustelldatum);
         aktionen.push({ fall_id: f.fall_id, aktion: "nachfassung_1_gesendet" });
       }
     }
