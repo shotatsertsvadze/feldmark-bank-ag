@@ -196,20 +196,98 @@ reaktivieren step too, even though it already requires two mandatory human-
 supplied fields), that's a design opinion worth discussing, not something I
 want to silently add code for without being asked.
 
+## Iteration 3 (2026-08-28) — Backlog #3: Escalation logic for deadlines
+
+**What I did:** Verified the escalation logic against the backlog's exact
+wording by reading the *live* n8n workflows via MCP (not the possibly-stale
+checked-in JSON export, per `CLAUDE.md`'s warning) — both
+`Ix9jAYFWgh73fPv9` (Pfändung) and `vAHlgWXDJXIS2cps` (Auskunftsersuchen).
+
+**Finding 1 — timing doesn't match the literal backlog spec, deliberately.**
+The backlog asks for "reminds at 50% of the deadline, escalates at
+75-100%". The real logic uses fixed day-offsets instead: Erinnerung 1 at
+Fristbeginn (day 0), Erinnerung 2 three days before Fristende, Eskalation
+one day before Fristende. **Asked the user; decision: keep the current
+design, document the discrepancy, no code/n8n change for this part.**
+Reasoning for keeping it: matches `Fristleiste.jsx`'s UI markers exactly,
+already extensively tested (`docs/testmatrix.md` E1-E11), and arguably
+better-suited to a 14-day window than a 50%-then-dead-zone-then-75% curve.
+
+**Finding 2 — a real, live bug, found by diffing the two workflows against
+each other.** The Auskunftsersuchen sweep's "Fristen berechnen (§ 161
+StPO)" Code node was missing the signal-downgrade guard that the Pfändung
+sweep's equivalent node already got fixed with on 2026-08-27 (see
+`KONTEXT.md`) — despite a comment in the AE node literally claiming "1:1
+uebernommen aus der Pfaendungs-Fristueberwachung". Without the guard, a
+case that had already received an `eskalation` could still get a
+lower-priority `erinnerung_2`/`erinnerung_1` reminder later — the exact bug
+that was already found and fixed once, just not ported to its sibling.
+**Asked the user; approved. Fixed live**: applied the identical guard
+conditions to the AE workflow's Code node via `update_workflow`
+(`updateNodeParameters`, verified applied) and published it
+(`publish_workflow`) — confirmed by re-reading the live `activeVersion`
+node afterward, both draft and active version show the fix. Updated
+`docs/testmatrix.md` (new row E12) with this finding.
+
+**Verified with a passing automated test — and also extracted the logic per
+the backlog's own testing requirement** ("business logic hiding untested
+inside opaque workflow nodes" should be extracted where reasonable): new
+`feldmark_app/server/fristlogik.js`, a pure, parameterized re-implementation
+of the exact decision algorithm from both Code nodes (n8n itself can't
+import this file at runtime — no repo access from the n8n container — so
+this is the tested *reference*, not the executing code; the two Code nodes
+must still be hand-synced against it, documented prominently in the module
+and the n8n node's own comment now). 11 unit tests in
+`feldmark_app/server/fristlogik.test.js`, no `DATABASE_URL` needed (pure
+function, always runs): erinnerung_1/2, eskalation, fristversaeumnis +
+idempotency, erledigt short-circuit, weekend/holiday shift, Postgres
+array-string parsing, and — the two tests that matter most here — the
+signal-downgrade guard proven correct for **both** the fixed-14-day
+(Pfändung) and variable-day (Auskunftsersuchen) parameter sets, so this
+exact bug has a regression test now.
+
+```
+ℹ tests 18 (11 new fristlogik + 4 audit-trail + 3 HITL)
+ℹ pass 18
+ℹ fail 0
+```
+
+**Files touched:** new `feldmark_app/server/fristlogik.js`,
+`server/fristlogik.test.js`; `docs/testmatrix.md` (new row E12); live n8n
+workflow `vAHlgWXDJXIS2cps` (Code node fixed + published — not a local file
+change, mentioned here so a future iteration doesn't assume `git diff`
+shows everything that changed this iteration).
+
+**Decisions a future iteration/human should know about:**
+- The 50%/75-100% vs. fixed-offset timing question was explicitly decided
+  by the user this iteration (keep current design) — don't re-raise it
+  unless they bring it up again.
+- `fristlogik.js` is a *reference* implementation, not the live code path.
+  If either n8n Code node changes in the future, this file (and its tests)
+  need a matching update, and vice versa — there's no automatic sync
+  mechanism, this is a known, documented, accepted limitation (n8n can't
+  import from this repo).
+- Did not run a live `execute_workflow` test of the fixed AE sweep against
+  real case data this iteration (all current Auskunftsersuchen cases are
+  already in a terminal status per the sweep's own `WHERE status NOT IN
+  (...)` filter, so a live run would be a no-op anyway) — the unit tests
+  are the actual proof for this iteration; a live end-to-end trigger can be
+  requested separately if ever useful (e.g. once new AE cases exist).
+
 ## Backlog (prioritized, from the original prompt)
 
 - [x] **1. Audit trail completeness** — done, tested, iteration 1.
 - [x] **2. HITL boundaries** — done, tested, iteration 2. `docs/HITL-GRENZEN.md` —
   finding was "already correct," no new gates needed; documented + proved it.
-- [ ] **3. Escalation logic for deadlines** — **already exists and is
-  tested** (n8n sweeps, 07:00/07:15 daily, `docs/testmatrix.md` section E,
-  50%/75-100% reminder/escalation logic, protocol-logged). This item is
-  probably just "verify it's actually complete" like #1 was — check whether
-  the *Datendiskrepanz* sweep (`/api/sweep/datendiskrepanz`, still not wired
-  into n8n per `CLAUDE.md`) needs the same 50/75% reminder-tier treatment the
-  main sweeps have, since right now it's a flat day-count threshold model
-  (nachfassung at fixed days, not percentage-of-remaining-deadline). Worth
-  double-checking against the backlog's exact wording before assuming done.
+- [x] **3. Escalation logic for deadlines** — done, tested, iteration 3.
+  Timing intentionally kept as fixed day-offsets (not literal 50%/75-100%,
+  user decision) — but found and fixed a real live bug in the process: the
+  Auskunftsersuchen sweep was missing a signal-downgrade guard its sibling
+  Pfändung sweep already had. Not extended to the Datendiskrepanz sweep
+  (`/api/sweep/datendiskrepanz`) — that's a structurally different "wait
+  N days for a reply" pattern, not a single-deadline reminder/escalation
+  curve, so the 50%/75% framing doesn't map onto it the same way; flagged
+  but not changed.
 - [ ] **4. Case dashboard** — **already exists**
   (`Falluebersicht.jsx`: KPI tiles, case list, colour-coded deadline bar/
   "Fristleiste", last event via Aktivitätsfeed). Check carefully whether
@@ -254,6 +332,6 @@ want to silently add code for without being asked.
 
 ## Stop condition
 
-Not yet reached — 2 of 5 iterations done. Continue with the next
-highest-priority unmarked item above (item 3, but re-read its note first —
-it may turn out to already be satisfied like item 2 did).
+Not yet reached — 3 of 5 iterations done. Continue with the next
+highest-priority unmarked item above (item 4, but re-read its note first —
+it may turn out to already be satisfied, same pattern as item 2).

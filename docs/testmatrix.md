@@ -41,7 +41,7 @@ Stand: 2026-08-27. Bei neuen Tests: Zeile ergänzen/aktualisieren statt eine zwe
 | B2 | Teilweise gedeckt (P-Konto + Freibetrag) | Korrekter pfändbarer Betrag, Teilbetrag-Text | ✅ | 2026-08-13, „1.500 EUR ggü. 2.000 EUR → Teilbetrag-Fall" |
 | B3 | Kein pfändbares Guthaben | Korrekte Nullbetrag-Erklärung | ✅ | Backend-Verifikation 2026-08-13 („4 Szenarien") |
 | B4 | Mehrfachpfändung desselben Schuldners | Korrekte Rangfolge, vollständige Pflichtangabe-3-Liste | ✅ | 2026-08-13 Backend-Test |
-| B5 | Forderungshöhe fehlt (NULL, alte Seed-Fälle) | Erzeugung schlägt fail-closed mit 422 fehl | ✅ | 2026-08-13 UI-Verifikation |
+| B5 | Forderungshöhe fehlt (NULL, alte Seed-Fälle) | Erzeugung schlägt fail-closed mit 422 fehl | ✅ | 2026-08-13 UI-Verifikation, erneut 2026-08-27 auf PF-2026-0481 (Regressionscheck nach UI-Politur) |
 | B6 | Guthaben speichern OHNE P-Konto-Status zu prüfen (tri-state) | `p_konto_geprueft` bleibt `false`, KEINE Benachrichtigung ausgelöst | ✅ | 2026-08-27, Code-Review-Fix #2, live UI + DB geprüft |
 | B7 | P-Konto explizit auf „Kein P-Konto" gesetzt | Benachrichtigung ausgelöst, Bestätigungs-Banner erscheint SOFORT (kein Reload nötig) | ✅ | 2026-08-27, Code-Review-Fix #2+#3, live UI + DB geprüft |
 | B8 | Vier-Augen: Freigebende Person = zuletzt Guthaben erfasst | 409 + Warnung, Override möglich, protokolliert | ✅ | 2026-08-13 Nacht-Loop, erneut 2026-08-27 (ablehnen-Testreihe) |
@@ -67,10 +67,10 @@ Stand: 2026-08-27. Bei neuen Tests: Zeile ergänzen/aktualisieren statt eine zwe
 |---|---|---|---|---|
 | D1 | Fallanlage | Compliance automatisch informiert (`compliance_informiert`-Ereignis) | ✅ | Live im Aktivitätsfeed/Protokoll sichtbar, jede Fallanlage ruft dies auf |
 | D2 | Vertrauliches Ersuchen (§§ 161, 161a StPO) | Warnhinweis „keine Kundeninformation" in UI sichtbar | ✅ | Visuell bestätigt (AE-2026-0118/0130, VERTRAULICH-Badge) |
-| D3 | Rechtsgrundlagenprüfung (E3): Punkte auswählen + Antwortwerte | Korrekt gespeichert, Antworttext nutzt nur freigegebene Punkte | ✅ | 2026-08-27, im Rahmen des Ablehnen-Tests durchlaufen |
+| D3 | Rechtsgrundlagenprüfung (E3): Punkte auswählen + Antwortwerte | Korrekt gespeichert, Antworttext nutzt nur freigegebene Punkte | ✅ | 2026-08-27, im Rahmen des Ablehnen-Tests durchlaufen; erneut 2026-08-27 (Regressionscheck) auf AE-2026-0118 — nur „Kontobestand" freigegeben, Antworttext listet korrekt nur diesen Punkt |
 | D4 | Kontosperre NUR bei Beschlagnahme/Arrest im Schreiben selbst | Reines Auskunftsersuchen löst KEINE Sperre aus | ⚠️ | Backend-Logik (`entscheideSperre()`) vorhanden, kein dokumentierter Klick-Test über die echte UI gefunden |
 | D5 | Vier-Augen bei Antwortfreigabe (`rechtsgrundlage_geprueft_von`) | Gleiche Person → 409-Warnung, Override protokolliert | ⚠️ | Strukturell identisch zu B8 (Code-Review bestätigt), aber kein dokumentierter Live-Test speziell für die Auskunftsersuchen-Seite mit dem 409-Pfad (2026-08-27 wurde nur direkt mit `vier_augen_bestaetigt:true` getestet) |
-| D6 | **Antwort ablehnen** — vor Freigabe / nach Freigabe vor Versand / nach Versand | Gleiches Verhalten wie B11–B13 | ✅ | 2026-08-27, neu gebaut + live getestet (API + Protokoll-Event) |
+| D6 | **Antwort ablehnen** — vor Freigabe / nach Freigabe vor Versand / nach Versand | Gleiches Verhalten wie B11–B13 | ✅ | 2026-08-27, neu gebaut + live getestet (API + Protokoll-Event); erneut 2026-08-27 (Regressionscheck) über echte Browser-UI auf AE-2026-0118 — Status korrekt zurück auf „Geprueft", `antwort_text` bleibt erhalten, `antwort_abgelehnt`-Ereignis live im Protokoll |
 
 ## E. Fristüberwachung (n8n, täglich)
 
@@ -83,6 +83,7 @@ Stand: 2026-08-27. Bei neuen Tests: Zeile ergänzen/aktualisieren statt eine zwe
 | E5 | Pfändungs-Sweep: Fristversäumnis | Dokumentiert, Status „Abgeschlossen mit Fristversaeumnis" | ✅ | 2026-08-27, live via `execute_workflow` |
 | E6 | Fristversäumnis-Idempotenz bei Partial-Failure (Protokoll-INSERT ok, Status-UPDATE fehlgeschlagen) | Kein doppelter `fristversaeumnis`-Protokolleintrag beim nächsten Lauf | ✅ | 2026-08-27, künstlich simuliert (Status manuell zurückgesetzt, `erinnerungen_gesendet` behalten), Sweep erneut gelaufen — korrekt kein Duplikat |
 | E7 | Auskunftsersuchen-Sweep: alle vier Aktionspfade | Wie E1–E5, eigene Fristlogik (StPO) | ✅ | 2026-08-13, „alle Aktionspfade ... zweimal hintereinander ... Idempotenz bestätigt" |
+| E12 | Auskunftsersuchen-Sweep: Signal-Downgrade-Schutz (Eskalation bereits gesendet → erinnerung_2/1 dürfen nicht nachträglich feuern) | Kein Downgrade, wie E4 auf der Pfändungsseite | ✅ | 2026-08-28, RALPH-PROGRESS.md Iteration 3: live geprüft, Code-Node „Fristen berechnen (§ 161 StPO)" fehlte der am 2026-08-27 im Pfändungs-Node ergänzte Schutz trotz „1:1 Kopie"-Kommentar — jetzt live nachgezogen + published, Regel zusätzlich unit-getestet in `feldmark_app/server/fristlogik.test.js` |
 | E8 | Fristende auf Wochenende/Feiertag | Verschiebung auf nächsten Werktag | ✅ | 2026-08-13 |
 | E9 | Kompletter Sweep-Ausfall → Fehler-Alert-Workflow | `feldmark.sweep_status` wird auf „fehler" gesetzt samt Fehlermeldung | ⚠️ | Nur durch Konstruktion verifiziert — Error-Trigger-Workflows lassen sich in n8n nicht manuell auslösen, laut `KONTEXT.md` bereits so dokumentiert |
 | E10 | `sweep_status` Erfolgs-Pfad (optimistisches „erfolgreich" bei Sweep-Start) | Dashboard-Panel zeigt aktuellen Lauf korrekt | ✅ | 2026-08-27 im Dashboard sichtbar bestätigt („heute, 09:59 Uhr") |
@@ -95,6 +96,28 @@ Stand: 2026-08-27. Bei neuen Tests: Zeile ergänzen/aktualisieren statt eine zwe
 - **Echter Versandkanal** — Platzhalter in beiden Sweeps, kein echter Sende-Node zum Testen vorhanden.
 
 ---
+
+## Regressionscheck 2026-08-27 (nach UI-Politur)
+
+Nach den rein visuellen Änderungen dieser Session (Tastaturzugänglichkeit der Fallzeilen,
+Primär-/Sekundär-Button-Stile) wurde end-to-end geprüft, dass keine Funktionslogik betroffen ist:
+
+- Backend/DB: alle GET-Endpunkte (`/api/faelle`, `/api/sichtpruefung`, `/api/aktivitaet`,
+  `/api/sweep-status`, `/api/datendiskrepanz`, `/api/faelle/:id/protokoll`, `/api/faelle/:id/erweiterung`,
+  `/api/faelle/:id/auskunftsersuchen-erweiterung`) liefern korrekte Live-Daten, 404 bei unbekanntem
+  Fall geprüft.
+- Frontend: keine Konsolenfehler (nur die vorbestehenden React-Router-v7-Future-Flag-Warnungen,
+  unabhängig vom Projekt), KPI-Zahlen und Fallliste stimmen mit Backend überein.
+- Voller Interaktionspfad live über echte Browser-UI durchgespielt (siehe B5, D3, D6 oben) — inklusive
+  des neu gestalteten Primär-Buttons ("Antwort erzeugen"), des Fehlerpfads (422 fail-closed) und des
+  Ablehnen-Buttons (`.nav-tabs__btn--ablehnen`).
+- **Bewusst NICHT erneut ausgelöst:** die n8n-Sweeps (Fristüberwachung). Beide liefen heute bereits
+  regulär (siehe `sweep-status`, 07:00/07:15 Uhr) und ein manueller Re-Run würde reale Fallzustände
+  weiter (irreversibel) vorantreiben, z. B. PF-2026-0481 von „Eskalation gesendet" zu
+  „Fristversäumnis". E1–E11 stützen sich daher weiter auf die zuletzt dokumentierte Live-Verifikation
+  vom 2026-08-27 (siehe Tabelle E) — bei Bedarf auf Anfrage erneut auslösbar.
+- Datendiskrepanz (C1–C4) aktuell nicht live nachstellbar — kein offener Datendiskrepanz-Fall im
+  System (`/api/datendiskrepanz` liefert `[]`); Code-Pfad seit 2026-08-14 unverändert.
 
 ## Offene Lücken auf einen Blick
 
