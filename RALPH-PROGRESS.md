@@ -328,6 +328,93 @@ pre-triage), so "last event" doesn't map onto it the same way. If that's
 wrong, easy to extend `listeSichtpruefung()` the same way, just didn't seem
 in scope for what the backlog meant by "case dashboard."
 
+## Iteration 5 (2026-08-28) — Backlog #5: Ist-Soll docs, BPMN, Ishikawa, 5-Why
+
+**What I did:** Asked the user first (per iteration 0's flagged open
+question) how to handle the fact that this project already has all four
+methods as static HTML analysis docs at the repo root, while the backlog
+asks for `docs/*.md` files cross-referenced to actual code. User confirmed:
+port + cross-reference the existing content, don't redo the analysis and
+don't skip it. Read the three source HTML docs in full (stripped to text
+via a quick script rather than reading raw markup, to keep this efficient):
+`Pfaendungsprozess_Analyse_Sollkonzept.html` (Ist-Prozess Abschnitt 2,
+Soll-Prozess Abschnitt 3), `Pfaendungsprozess_Methodenanwendung.html`
+(Reifegradmodell/Pareto/Ishikawa/5-Why, Abschnitte 1-5),
+`Pfaendungsprozess_BPMN_v5_1.html` (four diagrams: A Hauptprozess, B
+Datendiskrepanz, C Dauerüberwachung, D Auskunftsersuchen).
+
+Wrote four new docs, each step/branch cross-checked against the actual
+current code (not just copied from the source docs) and marked
+✅/⚠️/❌ (same legend semantics as `docs/testmatrix.md`):
+
+- `docs/IST-PROZESS.md` — the six-section Ist-Prozess weakness analysis,
+  ported, ending in the "kein Fallobjekt" root cause.
+- `docs/SOLL-PROZESS.md` — the biggest one. Mermaid swimlane diagram
+  (System/Automatisierung, Pfändungsteam, Kunde, Gläubiger lanes via
+  subgraphs) of the main flow, plus a second diagram for Ast A
+  (Datendiskrepanz). Every Soll-step from Sollkonzept 3.0-3.5 and BPMN
+  Diagrams A-D gets an honest status: most of the case-lifecycle logic
+  (fall creation, deadline tracking, Datendiskrepanz, Vier-Augen gates,
+  audit trail) is ✅; almost everything else that's ❌ traces back to one
+  single, from-day-one-deliberate boundary — no core-banking integration
+  (README "Bewusste Grenzen") — not to oversights. Said so explicitly
+  rather than leaving each ❌ looking like an unrelated small gap.
+- `docs/ISHIKAWA-DURCHLAUFZEIT.md` — the four-category fishbone (Mensch,
+  Prozess, System, Umfeld/Recht) as a Mermaid diagram, plus a cross-
+  reference table mapping each of the eight root causes to what the built
+  system does about it.
+- `docs/5WHY-DRITTSCHULDNER-KLAERUNG.md` — the five-level Why chain ending
+  at "kein Fallobjekt mit Vertretungsfähigkeit", with real code references
+  (table/column/function names) for how the built system answers it.
+
+**Real finding while doing this — not something I went looking for, it
+surfaced from actually reading both source docs closely:** the project's
+own two design documents disagree with each other on one specific point.
+The prose Sollkonzept (Abschnitt 3.0, Schritt 4) specifies Erinnerung 1 at
+"50 % verbrauchter Frist". The later, more detailed BPMN v5 diagram
+(Diagramm A) specifies "Timer: Fristbeginn → Erinnerung 1" — i.e. day 0,
+0 %. **The actual code matches BPMN v5 exactly, not the earlier Sollkonzept
+prose.** This means my framing in iteration 3 ("the backlog's 50%/75-100%
+wording is generic template language, the real design deliberately differs")
+was incomplete — it's not just generic wording, one of the project's own
+authoritative documents actually specifies 50 % too, and the current
+implementation only matches the *other*, later one. Documented this
+precisely in `docs/SOLL-PROZESS.md`'s "Hinweis zu Schritt 4" rather than
+silently re-opening or silently ignoring the iteration 3 decision — the
+user already decided to keep the current behavior, so I didn't touch code
+or n8n again, just made sure this fuller picture is on record since it
+revises (doesn't reverse) what iteration 3 concluded.
+
+**Verification approach for this iteration (no automated test applies —
+these are documentation/diagram files, not executable logic):** every ✅
+claim was checked against the actual current code (function names, file
+paths, table/column names quoted are real, not paraphrased) rather than
+trusted from the source HTML docs, which themselves are sometimes
+stale relative to what was later built (e.g. the Methodenanwendung doc
+still says the Datendiskrepanz workflow "existiert nicht im Code" — true
+when written, false since 2026-08-14, corrected in the new docs). Also
+caught and fixed a real Mermaid syntax bug before committing: one diagram
+had a German „…" quote whose closing mark was a literal ASCII `"`,
+which would have silently broken that node's rendering — found by writing
+a small script to check for unbalanced quotes inside every ```mermaid```
+block across all four new files, not just eyeballing it.
+
+**Files touched:** new `docs/IST-PROZESS.md`, `docs/SOLL-PROZESS.md`,
+`docs/ISHIKAWA-DURCHLAUFZEIT.md`, `docs/5WHY-DRITTSCHULDNER-KLAERUNG.md`.
+No application code changed.
+
+**Decisions a future iteration/human should know about:**
+- The existing HTML docs at the repo root were **not** deleted or marked
+  superseded — they're the original, fuller analysis (e.g. the full 5716px
+  BPMN diagrams, the Pareto quantification, the maturity-model table with
+  three columns per step) and the new `.md` files are a condensed,
+  code-cross-referenced companion, not a replacement. `README.md`'s
+  "Methodik" section still points at the HTML docs; wasn't asked to change
+  that and didn't.
+- The Sollkonzept-vs-BPMN-v5 discrepancy on Schritt 4 timing is now
+  written down in exactly one place (`docs/SOLL-PROZESS.md`). If it comes
+  up again, that's the reference — no need to re-derive it.
+
 ## Backlog (prioritized, from the original prompt)
 
 - [x] **1. Audit trail completeness** — done, tested, iteration 1.
@@ -347,18 +434,12 @@ in scope for what the backlog meant by "case dashboard."
   but "last event" was genuinely missing from the per-row dashboard view —
   only in the separate global feed or behind a click-to-expand. Added it to
   `listeOffeneFaelle()` + the case row UI.
-- [ ] **5. Ist-Soll docs, BPMN, Ishikawa, 5-Why** — **Ist/Soll analysis,
-  BPMN v5, Reifegradmodell/Pareto/Ishikawa/5-Why already exist** as static
-  HTML docs at the repo root (`Pfaendungsprozess_Analyse_Sollkonzept.html`,
-  `Pfaendungsprozess_BPMN_v5_1.html`, etc. — see `README.md`'s "Methodik"
-  section and `KONTEXT.md`). The backlog asks for these as `docs/*.md` files
-  instead, cross-referenced to what's actually implemented (not
-  aspirational) — that's a different, more code-grounded framing than the
-  existing HTML docs, so this is likely still real work, just needs to
-  **reuse/port the existing analysis content, not redo the analysis from
-  scratch**. Needs human input on whether the existing HTML docs already
-  satisfy this, or whether the new `.md` + cross-referenced-to-code framing
-  is specifically wanted in addition. **Flagging, not deciding.**
+- [x] **5. Ist-Soll docs, BPMN, Ishikawa, 5-Why** — done, iteration 5. User
+  confirmed: port + cross-reference the existing HTML analysis into new
+  `docs/*.md` files (not redo the analysis, not skip it). Found a real,
+  previously-unnoticed discrepancy between the project's own design docs
+  while doing this — see iteration 5 writeup and `docs/SOLL-PROZESS.md`'s
+  "Hinweis zu Schritt 4".
 - [ ] **6. Self-service read-only status link** — genuinely not built yet
   (confirmed multiple times in `KONTEXT.md`/`CLAUDE.md` as an explicitly
   deferred stretch goal). Correctly last-priority per the backlog ("only
@@ -366,27 +447,46 @@ in scope for what the backlog meant by "case dashboard."
 
 ## Needs human input
 
-- **Item 5 framing** (see above) — existing HTML process docs vs. new
-  code-cross-referenced `.md` docs the backlog describes. Don't want to
-  duplicate a full Ist/Soll+BPMN+Ishikawa+5-Why analysis that already exists
-  in a different format without checking first.
-- **Items 3 and 4 may already be "done"** per the letter of the backlog —
-  next iteration should explicitly re-read the backlog wording against what
-  exists and decide whether to mark them done-with-existing-evidence or
-  whether there's a specific gap intended. Didn't want to guess and either
-  under- or over-build.
+- **Item 5 framing** — resolved in iteration 5 (port + cross-reference,
+  confirmed by user). No longer open.
+- **The Sollkonzept-vs-BPMN-v5 Schritt-4 timing discrepancy** found in
+  iteration 5 (see that section and `docs/SOLL-PROZESS.md`) — documented,
+  not acted on, since iteration 3 already made a decision on the visible
+  behavior and this doesn't change that behavior, only the completeness of
+  the reasoning behind it. Surface it to the user if it comes up again;
+  don't silently revisit.
 - General: this backlog reopens scope that was explicitly narrowed on
   2026-08-13 and reaffirmed (with "hold off") on 2026-08-27, then explicitly
-  un-held-off in this session on 2026-08-28. Worth the user knowing that
-  their own memory/decision record (Claude Code's persistent memory) may
-  read as contradictory across sessions until it's updated to reflect this
-  reversal — that update should happen once this backlog run actually
-  concludes (5 iterations or backlog-complete), not mid-run.
+  un-held-off in this session on 2026-08-28. The user's own memory/decision
+  record (Claude Code's persistent memory) should be updated to reflect
+  this reversal now that the backlog run has concluded (see below) — not
+  done yet as of this file, should happen in the same session that reads
+  this final state.
 
 ## Stop condition
 
-Not yet reached — 4 of 5 iterations done. Continue with item 5 next (Ist-Soll
-docs/BPMN/Ishikawa/5-Why) — but that one has a real open question flagged
-under "Needs human input" (existing HTML docs vs. new code-referenced .md
-docs) that should probably be resolved with the user before writing
-anything, not assumed.
+**Reached — 5 of 5 iterations complete**, per the run's own stop condition
+("after 5 iterations (or earlier if the full backlog above is genuinely
+done and tested), stop"). Items 1-5 are done, each with either a passing
+automated test (1-4) or, for item 5 (documentation, no executable logic to
+test), careful verification against the current real code plus a caught-
+and-fixed Mermaid syntax bug before commit.
+
+Item 6 (self-service read-only status link) remains **not done** — by
+design, it was explicitly the lowest-priority, "only after 1-5 are solid"
+item in the original backlog, and the 5-iteration budget is now spent.
+Starting it would be a new decision, not a continuation of this run; if
+the user wants it, that's a fresh conversation, not an assumption to make
+here.
+
+**Summary for a human reading this in two minutes:** four real, verified
+findings came out of this run (silent audit-trail gaps in nine functions,
+fixed; HITL gates confirmed already correct; a live signal-downgrade bug in
+the Auskunftsersuchen n8n workflow that its sibling had already been fixed
+for, found and fixed; "last event" missing from the dashboard, added) plus
+one documentation set that makes the existing process analysis
+code-traceable for the first time. Every code change has a passing
+automated test (`npm test` in `feldmark_app/`, 20/20 green as of iteration
+4, unaffected by iteration 5's docs-only changes). Nothing was changed
+silently — every judgment call (escalation timing, live n8n edits, docs
+framing) was surfaced to the user first.
