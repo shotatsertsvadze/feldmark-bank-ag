@@ -122,17 +122,85 @@ since it already works and is already tested (`docs/testmatrix.md` B11–B13,
 D6) — didn't want to touch working, tested code just for architectural
 consistency when the backlog only asked to close actual gaps.
 
+## Iteration 2 (2026-08-28) — Backlog #2: HITL boundaries
+
+Note: a second `/ralph-loop` invocation happened between iterations 1 and 2
+(argument `@RALPH-PROGRESS.md`), again misconfigured the same way as the
+first attempt (`max_iterations: 0`, no stop condition, "cannot be stopped
+manually"). Cancelled again before it did anything, same as iteration 0's
+false start — continuing inline as agreed. If a future iteration sees a
+`.claude/ralph-loop.local.md` file, it's very likely another stray
+misconfigured attempt — check with the user before assuming it should
+actually run unbounded.
+
+**What I did:** Enumerated every process step across Pfändung, Auskunftsersuchen,
+Datendiskrepanz, and the n8n sweeps, and classified each as automatic or
+requiring human approval, with reasoning — written up in
+`docs/HITL-GRENZEN.md`. Cross-checked against `KONTEXT.md`'s existing
+Vier-Augen decisions rather than re-deciding from scratch.
+
+**Finding: no new gates were needed.** Unlike Backlog #1, this one came back
+clean — every step that should require human approval already does, and
+verifiably so:
+- Drittschuldnererklärung freigeben and Auskunftsersuchen-Antwort freigeben
+  (**the explicit "Datenherausgabe an Polizei/Staatsanwaltschaft" case named
+  in the backlog**) both already have a real server-side Vier-Augen gate:
+  the route returns 409 and never calls the DB-mutating function unless
+  `vier_augen_bestaetigt: true` is explicitly sent.
+- Confirmed (by reading the Datendiskrepanz sweep code closely) that the
+  auto-generated "fristwahrende Erklärung" (day-10 fallback) only ever
+  reaches draft state automatically — the sweep never calls
+  `gibErklaerungFrei`/`bestaetigeVersand`. A human still has to freigeben +
+  versenden it through the normal two-step flow. This wasn't obvious without
+  reading the code and is now written down explicitly in the doc so it
+  doesn't need re-discovering.
+- Kontosperre-Entscheidung and account-related steps: this project has no
+  real core-banking integration, so "Konto sperren/entsperren" from the
+  Bauplan's example table doesn't exist here as an automatable action at
+  all — the decision itself is already 100% manual (`entschieden_von` is a
+  required field). Documented why this means no additional gate is needed,
+  rather than silently skipping it.
+
+**Verified with a passing automated test:** `feldmark_app/server/hitl-gates.test.js`,
+3 new tests, run via `npm test`. Unlike #1's tests (which called db.js
+functions directly), these spin up the **real Express server** as a child
+process on its own test port (4399) and hit it over real HTTP — proving the
+gate at the layer that actually matters (the route), not just the
+underlying data function. Each test asserts both the HTTP status *and* that
+the case's DB status genuinely did not change — a gate that blocks the HTTP
+response but still runs the mutation underneath would fail this.
+
+```
+✔ Vier-Augen-Gate (Drittschuldnererklaerung): ... blockiert (409) ... Status aendert sich NICHT
+✔ Vier-Augen-Gate (Auskunftsersuchen-Antwort / Datenherausgabe an Behoerde): ... blockiert (409) ...
+✔ Freigabe-Endpunkte lehnen einen Request komplett ohne 'freigegeben_von' ab (400) ...
+ℹ tests 7 (4 from #1 + 3 new)
+ℹ pass 7
+ℹ fail 0
+```
+
+Full suite (`npm test`, both test files) still green — 7/7. Confirmed no
+leftover `RALPH-TEST-*` rows and the spawned test-server process exits
+cleanly (checked `lsof -i :4399` after the run — nothing bound). Also ran
+`npm run build` again as a regression check (clean).
+
+**Files touched:** new `docs/HITL-GRENZEN.md`, new
+`feldmark_app/server/hitl-gates.test.js`. No production code changed this
+iteration — the finding was "already correct," not "broken."
+
+**Decision a future iteration/human should know about:** I did not add a
+gate anywhere, because I didn't find a real gap — only documented and
+proved what already exists. If a future iteration or a human disagrees that
+this is sufficient coverage (e.g. wants a gate on the Datendiskrepanz
+reaktivieren step too, even though it already requires two mandatory human-
+supplied fields), that's a design opinion worth discussing, not something I
+want to silently add code for without being asked.
+
 ## Backlog (prioritized, from the original prompt)
 
-- [x] **1. Audit trail completeness** — done, tested, this iteration.
-- [ ] **2. HITL-Grenzen table** — `docs/HITL-GRENZEN.md` + verify every
-  required-approval step has a real server-side gate (not just a comment).
-  Note: Vier-Augen gates already exist and are server-side (freigeben routes)
-  — this item is mostly about writing the table down and double-checking
-  coverage (e.g. does the Datendiskrepanz reaktivieren step need a gate? does
-  the Kontosperre-Entscheidung?), not building new gates from scratch. Check
-  `KONTEXT.md` for what's already been decided about HITL boundaries before
-  assuming a gap.
+- [x] **1. Audit trail completeness** — done, tested, iteration 1.
+- [x] **2. HITL boundaries** — done, tested, iteration 2. `docs/HITL-GRENZEN.md` —
+  finding was "already correct," no new gates needed; documented + proved it.
 - [ ] **3. Escalation logic for deadlines** — **already exists and is
   tested** (n8n sweeps, 07:00/07:15 daily, `docs/testmatrix.md` section E,
   50%/75-100% reminder/escalation logic, protocol-logged). This item is
@@ -186,5 +254,6 @@ consistency when the backlog only asked to close actual gaps.
 
 ## Stop condition
 
-Not yet reached — 1 of 5 iterations done. Continue with the next
-highest-priority unmarked item above.
+Not yet reached — 2 of 5 iterations done. Continue with the next
+highest-priority unmarked item above (item 3, but re-read its note first —
+it may turn out to already be satisfied like item 2 did).
