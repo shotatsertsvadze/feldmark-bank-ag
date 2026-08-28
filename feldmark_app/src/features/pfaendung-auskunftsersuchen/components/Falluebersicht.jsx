@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { faelleLaden, sichtpruefungLaden } from "../api.js";
 import { berechneFrist, formatiereDatum } from "../fristlogik.js";
-import { DOKUMENTTYP_LABEL } from "../dokumenttypen.js";
+import { DOKUMENTTYP_LABEL, EREIGNIS_LABEL } from "../dokumenttypen.js";
 import Fristleiste from "./Fristleiste.jsx";
 import Stempel from "./Stempel.jsx";
 import PfaendungErweiterung from "./PfaendungErweiterung.jsx";
@@ -10,6 +10,8 @@ import DatendiskrepanzFall from "./DatendiskrepanzFall.jsx";
 import Fallverlauf from "./Fallverlauf.jsx";
 import Aktivitaetsfeed from "./Aktivitaetsfeed.jsx";
 import SweepStatus from "./SweepStatus.jsx";
+
+const datumUhrzeit = (iso) => new Date(iso).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" });
 
 const FILTER = [
   { id: "alle", label: "Alle" },
@@ -139,6 +141,16 @@ export default function Falluebersicht({ reloadSignal }) {
                         {f.partei_a} → {f.partei_b}
                       </div>
                       <div className="fall-zeile__status">{f.status}</div>
+                      {f.letztes_ereignis && (
+                        <div className="fall-zeile__letztes-ereignis">
+                          <span
+                            className={`verlauf__punkt verlauf__punkt--${(EREIGNIS_LABEL[f.letztes_ereignis] || {}).farbe || "slate"}`}
+                            aria-hidden="true"
+                          />
+                          {(EREIGNIS_LABEL[f.letztes_ereignis] || {}).label || f.letztes_ereignis}
+                          {f.letztes_ereignis_am && ` · ${datumUhrzeit(f.letztes_ereignis_am)}`}
+                        </div>
+                      )}
                     </div>
                     <Fristleiste
                       eingangsdatum={f.eingangsdatum}

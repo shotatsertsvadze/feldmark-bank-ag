@@ -274,6 +274,60 @@ shows everything that changed this iteration).
   are the actual proof for this iteration; a live end-to-end trigger can be
   requested separately if ever useful (e.g. once new AE cases exist).
 
+## Iteration 4 (2026-08-28) — Backlog #4: Case dashboard
+
+**What I did:** Checked `Falluebersicht.jsx` (the dashboard) against the
+backlog's exact wording: "case ID, status, remaining deadline (with a clear
+visual severity indicator), last event." Three of four were already there
+and solid — `fall_id`, `f.status` as plain text, and the colour-coded
+`Fristleiste` bar (moss/ochre/oxblood zones, already covered by
+`docs/testmatrix.md`). **"Last event" was genuinely missing** from the
+per-case row: it only existed in the separate, cross-case `Aktivitaetsfeed`
+panel (requires mentally matching fall_id across a mixed, time-sorted list)
+or behind a click-to-expand into `Fallverlauf`. Neither is "the dashboard
+shows the last event for this case" at a glance, which is what the backlog
+asked for.
+
+**Fix:** `listeOffeneFaelle()` in `server/db.js` now does a
+`LEFT JOIN LATERAL` per case type against its protokoll table (ordered by
+`erzeugt_am DESC LIMIT 1`, uses the existing `idx_protokoll_fall` index —
+no new index needed), returning `letztes_ereignis`/`letztes_ereignis_am`.
+`Falluebersicht.jsx` renders it as a small line under the status, reusing
+the exact same `verlauf__punkt--*` coloured-dot + `EREIGNIS_LABEL` pattern
+`Aktivitaetsfeed.jsx` already uses — so an event looks the same everywhere
+in the app, not a new visual language for one more place.
+
+**Verified with a passing automated test:** new
+`feldmark_app/server/dashboard.test.js`, 2 tests — creates a real case,
+confirms `letztes_ereignis` reflects the fall-creation event, performs
+another action (`speichereErklaerung`/`speichereAuskunftsersuchenAntwort`),
+re-fetches, and confirms it updated to the new event. Both pass.
+
+```
+ℹ tests 20 (2 new dashboard + 18 from iterations 1-3)
+ℹ pass 20
+ℹ fail 0
+```
+
+Also did a live visual check (not just the automated test): created a
+throwaway `PF-2026-0534` case, generated a Drittschuldnererklärung so it had
+a real event, confirmed in the actual running UI that the row shows
+"Drittschuldnererklärung erzeugt · 28.08.2026, 14:13" with the correct
+colour, then deleted the throwaway case (protokoll → erweiterung → faelle)
+immediately after — confirmed no open cases remained afterward. `npm run
+build` clean.
+
+**Files touched:** `feldmark_app/server/db.js` (`listeOffeneFaelle` query),
+`src/features/pfaendung-auskunftsersuchen/components/Falluebersicht.jsx`,
+`src/index.css`, new `server/dashboard.test.js`.
+
+**Decision a future iteration/human should know about:** scoped this to the
+Pfändung/Auskunftsersuchen case list only, not the Sichtprüfung queue — a
+Sichtprüfung entry isn't a "case" with a deadline/event history yet (it's
+pre-triage), so "last event" doesn't map onto it the same way. If that's
+wrong, easy to extend `listeSichtpruefung()` the same way, just didn't seem
+in scope for what the backlog meant by "case dashboard."
+
 ## Backlog (prioritized, from the original prompt)
 
 - [x] **1. Audit trail completeness** — done, tested, iteration 1.
@@ -288,12 +342,11 @@ shows everything that changed this iteration).
   N days for a reply" pattern, not a single-deadline reminder/escalation
   curve, so the 50%/75% framing doesn't map onto it the same way; flagged
   but not changed.
-- [ ] **4. Case dashboard** — **already exists**
-  (`Falluebersicht.jsx`: KPI tiles, case list, colour-coded deadline bar/
-  "Fristleiste", last event via Aktivitätsfeed). Check carefully whether
-  this item means something specifically missing (e.g. a *combined*
-  cross-type view — it already shows both Pfändung and Auskunftsersuchen
-  together) before building anything new here.
+- [x] **4. Case dashboard** — done, tested, iteration 4. Most of it already
+  existed (KPI tiles, case list, colour-coded Fristleiste, cross-type view)
+  but "last event" was genuinely missing from the per-row dashboard view —
+  only in the separate global feed or behind a click-to-expand. Added it to
+  `listeOffeneFaelle()` + the case row UI.
 - [ ] **5. Ist-Soll docs, BPMN, Ishikawa, 5-Why** — **Ist/Soll analysis,
   BPMN v5, Reifegradmodell/Pareto/Ishikawa/5-Why already exist** as static
   HTML docs at the repo root (`Pfaendungsprozess_Analyse_Sollkonzept.html`,
@@ -332,6 +385,8 @@ shows everything that changed this iteration).
 
 ## Stop condition
 
-Not yet reached — 3 of 5 iterations done. Continue with the next
-highest-priority unmarked item above (item 4, but re-read its note first —
-it may turn out to already be satisfied, same pattern as item 2).
+Not yet reached — 4 of 5 iterations done. Continue with item 5 next (Ist-Soll
+docs/BPMN/Ishikawa/5-Why) — but that one has a real open question flagged
+under "Needs human input" (existing HTML docs vs. new code-referenced .md
+docs) that should probably be resolved with the user before writing
+anything, not assumed.

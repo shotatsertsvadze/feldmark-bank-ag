@@ -308,20 +308,43 @@ export async function listeOffeneFaelle() {
   // Zeitzone auf den Vortag faellt (2026-08-13 -> "2026-08-12T22:00:00Z").
   // Genau die Art von Datumsverschiebung, vor der klassifikations_schema.md
   // warnt - hier technisch statt fachlich, aber gleiche Konsequenz.
+  // RALPH-PROGRESS.md Backlog #4 (Dashboard, Iteration 4): "case ID, status,
+  // remaining deadline, LAST EVENT" - der letzte Punkt fehlte bisher komplett
+  // in dieser Liste (nur im fallübergreifenden Aktivitätsfeed oder nach dem
+  // Aufklappen einer Zeile sichtbar). LEFT JOIN LATERAL statt Subquery in
+  // SELECT, damit fall_id/erzeugt_am-Index (idx_protokoll_fall) direkt
+  // genutzt wird, kein Fall ohne Protokoll-Eintrag faellt weg (LEFT statt
+  // INNER).
   const pool = getPool();
   const pfaendung = await pool.query(
-    `SELECT fall_id, aktenzeichen, glaeubiger AS partei_a, schuldner AS partei_b,
-            to_char(zustelldatum, 'YYYY-MM-DD') AS eingangsdatum, 14 AS antwortfrist_tage, zustellkanal,
-            status, erinnerungen_gesendet, dokumenttyp
-     FROM   feldmark.pfaendung_faelle
-     WHERE  status NOT IN ('Erklaerung versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis')`
+    `SELECT f.fall_id, f.aktenzeichen, f.glaeubiger AS partei_a, f.schuldner AS partei_b,
+            to_char(f.zustelldatum, 'YYYY-MM-DD') AS eingangsdatum, 14 AS antwortfrist_tage, f.zustellkanal,
+            f.status, f.erinnerungen_gesendet, f.dokumenttyp,
+            letztes.ereignis AS letztes_ereignis, letztes.erzeugt_am AS letztes_ereignis_am
+     FROM   feldmark.pfaendung_faelle f
+     LEFT JOIN LATERAL (
+       SELECT ereignis, erzeugt_am
+       FROM   feldmark.pfaendung_protokoll p
+       WHERE  p.fall_id = f.fall_id
+       ORDER  BY p.erzeugt_am DESC
+       LIMIT  1
+     ) letztes ON true
+     WHERE  f.status NOT IN ('Erklaerung versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis')`
   );
   const auskunftsersuchen = await pool.query(
-    `SELECT fall_id, aktenzeichen, ausstellende_behoerde AS partei_a, betroffene_person_name AS partei_b,
-            to_char(eingangsdatum, 'YYYY-MM-DD') AS eingangsdatum, antwortfrist_tage, zustellkanal,
-            status, erinnerungen_gesendet, vertraulich, 'auskunftsersuchen' AS dokumenttyp
-     FROM   feldmark.auskunftsersuchen_faelle
-     WHERE  status NOT IN ('Antwort versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis')`
+    `SELECT f.fall_id, f.aktenzeichen, f.ausstellende_behoerde AS partei_a, f.betroffene_person_name AS partei_b,
+            to_char(f.eingangsdatum, 'YYYY-MM-DD') AS eingangsdatum, f.antwortfrist_tage, f.zustellkanal,
+            f.status, f.erinnerungen_gesendet, f.vertraulich, 'auskunftsersuchen' AS dokumenttyp,
+            letztes.ereignis AS letztes_ereignis, letztes.erzeugt_am AS letztes_ereignis_am
+     FROM   feldmark.auskunftsersuchen_faelle f
+     LEFT JOIN LATERAL (
+       SELECT ereignis, erzeugt_am
+       FROM   feldmark.auskunftsersuchen_protokoll p
+       WHERE  p.fall_id = f.fall_id
+       ORDER  BY p.erzeugt_am DESC
+       LIMIT  1
+     ) letztes ON true
+     WHERE  f.status NOT IN ('Antwort versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis')`
   );
   return [...pfaendung.rows, ...auskunftsersuchen.rows].sort((a, b) =>
     a.eingangsdatum < b.eingangsdatum ? -1 : 1

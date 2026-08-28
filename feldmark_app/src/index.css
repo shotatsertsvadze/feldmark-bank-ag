@@ -1341,6 +1341,24 @@ p.view-lede {
   margin-top: 3px;
 }
 
+/* Dashboard-Nachtrag (RALPH-PROGRESS.md Backlog #4): letztes Ereignis pro
+   Fall direkt in der Zeile, ohne Aufklappen - vorher nur im getrennten,
+   fallübergreifenden Aktivitätsfeed sichtbar. Gleicher Punkt wie im
+   Verlauf (.verlauf__punkt--*), nur inline statt in der Zeitleiste. */
+.fall-zeile__letztes-ereignis {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  margin-top: 4px;
+}
+
+.fall-zeile__letztes-ereignis .verlauf__punkt {
+  margin-top: 0;
+  box-shadow: none;
+}
+
 /* ------------------------------------------------------------ Fristleiste */
 
 .fristleiste {
