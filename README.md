@@ -1,6 +1,6 @@
 # Feldmark Bank AG — Digitale Fallbearbeitung für Pfändung & Auskunftsersuchen
 
-![Status](https://img.shields.io/badge/status-portfolio--projekt-blue)
+![Status](https://img.shields.io/badge/status-in%20Bearbeitung-yellow)
 ![React](https://img.shields.io/badge/frontend-React%20%2B%20Vite-61DAFB)
 ![Node](https://img.shields.io/badge/backend-Node.js%20%2F%20Express-339933)
 ![Postgres](https://img.shields.io/badge/datenbank-PostgreSQL%20(Supabase)-336791)
@@ -10,6 +10,8 @@
 Ein Ende-zu-Ende-System, das zeigt, wie eine Bank den Posteingang für **Kontopfändungen** und **behördliche Auskunftsersuchen** von einem papierbasierten, personenabhängigen Prozess in einen digitalen, prüfbaren Workflow überführt — von der OCR-Erkennung eines eingehenden Schreibens bis zur automatisierten Fristüberwachung mit Eskalationslogik.
 
 Entstanden als Abschlussprojekt im Digitalisierungsmanager-Bootcamp, angewendet auf einen realen Prozess aus eigener Fintech-Praxis.
+
+**Projektstatus:** in Bearbeitung — die Bootcamp-Einreichung (Präsentation, Tests, Live-Demo) steht noch aus. Fachlich sind beide Prozesse (Pfändung und Auskunftsersuchen) inklusive aller Soll-Verzweigungen, Vier-Augen-Gates, Ablehnen-Pfad und automatisierter Fristüberwachung bereits umgesetzt; der konsolidierte, ehrlich gekennzeichnete Teststand (live verifiziert vs. nur code-abgeleitet vs. noch offen) steht in `docs/testmatrix.md`. Offen sind außerdem noch der reale Versandkanal und ein optionaler Self-Service-Statuslink (Details unter [Bewusste Grenzen](#bewusste-grenzen)).
 
 <p align="center">
   <img src="docs/screenshots/falluebersicht.png" alt="Fallübersicht mit Fristüberwachung, Sweep-Status und Aktivitäts-Feed" width="880">
@@ -56,6 +58,7 @@ Das System übernimmt die drei Schritte, die sich tatsächlich automatisieren la
 - **Auskunftsersuchen:** Compliance wird bei Fallanlage sofort informiert, Rechtsgrundlagenprüfung legt fest, welche angefragten Punkte beantwortet werden, eine Kontosperre wird **nicht automatisch** ausgelöst — nur wenn das Schreiben selbst eine Beschlagnahme/einen Arrest trägt
 - Weiche Vier-Augen-Prüfung serverseitig erzwungen (nicht nur im Frontend umgehbar), Übersteuerung wird als eigenes Ereignis protokolliert
 - **Datendiskrepanz-Workflow:** fehlt nur der Schuldnername, blockiert das nicht mehr die Frist — der Fall läuft mit Platzhalter weiter, während parallel beim Gläubiger nachgefasst wird
+- **Ablehnen-Pfad:** Drittschuldnererklärung und Auskunftsersuchen-Antwort können vor dem Versand explizit abgelehnt werden — protokolliert als eigenes Ereignis, gesperrt sobald der Fall bereits versendet wurde
 
 **Prozess-Transparenz**
 - Fall-Verlauf pro Akte und ein fallübergreifender Aktivitäts-Feed aus denselben Audit-Tabellen, die der Sweep ohnehin schreibt
@@ -105,6 +108,9 @@ feldmark_app/                       Express + React (Vite)
 
 *.sql                                Additive Schema-Dateien je Baustein
 muster_dateien/                      Testdokumente (inkl. bewusster Plausibilitäts-Fallen)
+docs/
+  testmatrix.md                       Konsolidierte, lebende Testmatrix
+  code_review/                        Datierte Code-Review-Berichte mit priorisierten Befunden
 ```
 
 ## Lokal starten
