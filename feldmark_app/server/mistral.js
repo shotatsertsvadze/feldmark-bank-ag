@@ -23,7 +23,8 @@ const ERLAUBTE_DOKUMENTTYPEN = [
   "auskunftsersuchen",
   "einziehungsverfuegung",
   "ueberweisungsverfuegung",
-  "erinnerungsschreiben",
+  "pfaendungserinnerung",
+  "auskunftsersuchenerinnerung",
   "sonstiges",
 ];
 
@@ -91,7 +92,7 @@ export async function ocrDokument(bytes, mimeType) {
 }
 
 const JSON_SCHEMA = `{
-  "dokumenttyp": "pfaendungsschreiben | auskunftsersuchen | einziehungsverfuegung | ueberweisungsverfuegung | erinnerungsschreiben | sonstiges",
+  "dokumenttyp": "pfaendungsschreiben | auskunftsersuchen | einziehungsverfuegung | ueberweisungsverfuegung | pfaendungserinnerung | auskunftsersuchenerinnerung | sonstiges",
   "konfidenz_typ": 0,
   "plausibilitaet_ok": true,
   "plausibilitaet_begruendung": "string, 1 Satz",
@@ -140,9 +141,16 @@ Feldmark Bank AG. Du bekommst den vollstaendigen OCR-Text eines eingehenden
 Schreibens (Scan oder E-Mail-Anhang).
 
 Aufgabe:
-1. Ordne das Dokument genau einem der sechs Typen zu: pfaendungsschreiben,
+1. Ordne das Dokument genau einem der sieben Typen zu: pfaendungsschreiben,
    auskunftsersuchen, einziehungsverfuegung, ueberweisungsverfuegung,
-   erinnerungsschreiben, sonstiges.
+   pfaendungserinnerung, auskunftsersuchenerinnerung, sonstiges.
+   Ein Erinnerungsschreiben ist pfaendungserinnerung, wenn es sich auf
+   einen Pfaendungs- und Ueberweisungsbeschluss/eine Kontopfaendung
+   bezieht, und auskunftsersuchenerinnerung, wenn es sich auf ein
+   behoerdliches Auskunftsersuchen bezieht. Ist das aus dem Text nicht
+   eindeutig erkennbar, waehle den Typ, auf den der Text ueberwiegend
+   hindeutet - die Zuordnung wird serverseitig zusaetzlich gegen das
+   referenzierte Aktenzeichen geprueft, bevor sie uebernommen wird.
 2. Fuelle nur die Felder, die zum erkannten Typ gehoeren, aus dem
    JSON-Schema aus.
 3. Trage ausschliesslich das ein, was woertlich oder eindeutig im Text
@@ -282,6 +290,15 @@ const SCHWELLE_KONFIDENZ_TYP = 70;
 const SCHWELLE_KONFIDENZ_BETRAG = 85;
 const SCHWELLE_OCR_KONFIDENZ = 60;
 export const PFAENDUNGSBLOCK_TYPEN = ["pfaendungsschreiben", "einziehungsverfuegung", "ueberweisungsverfuegung"];
+export const ERINNERUNG_TYPEN = ["pfaendungserinnerung", "auskunftsersuchenerinnerung"];
+
+// Welche Falltabelle fuer welchen Erinnerungstyp erwartet wird - Grundlage
+// fuer den Abgleichs-Check unten (Modell-Zuordnung vs. tatsaechlicher
+// Tabellenfund per Aktenzeichen).
+const ERWARTETE_TABELLE_ERINNERUNG = {
+  pfaendungserinnerung: "feldmark.pfaendung_faelle",
+  auskunftsersuchenerinnerung: "feldmark.auskunftsersuchen_faelle",
+};
 
 /**
  * Reine Routing-Entscheidung nach der Tabelle in klassifikations_schema.md,
@@ -295,14 +312,19 @@ export const PFAENDUNGSBLOCK_TYPEN = ["pfaendungsschreiben", "einziehungsverfueg
  *    Sichtpruefung - genauso wenn gar keine OCR-Konfidenz vorliegt (fail
  *    closed statt die Pruefung stillschweigend zu ueberspringen).
  *
- * Die Erinnerungsschreiben-Regel ("bezug_aktenzeichen nicht im Bestand
- * auffindbar") braucht einen DB-Abgleich - der Aufrufer (server/index.js)
- * fuehrt den vorher aus und uebergibt das Ergebnis. Ohne Angabe (Parameter
- * weggelassen) wird konservativ von "nicht gefunden" ausgegangen.
+ * Die Erinnerungsschreiben-Regel braucht einen DB-Abgleich - der Aufrufer
+ * (server/index.js) fuehrt den vorher aus (findeFallZuAktenzeichen) und
+ * uebergibt das volle Ergebnis als erinnerungTreffer. Ohne Treffer wird
+ * konservativ auf Sichtpruefung geroutet; bei einem Treffer in der falschen
+ * Tabelle (Modell sagt pfaendungserinnerung, Aktenzeichen existiert aber nur
+ * in auskunftsersuchen_faelle) ebenso - das ist ein staerkeres
+ * Plausibilitaetssignal als vor der Typ-Aufspaltung moeglich war, weil das
+ * Modell jetzt einen eigenstaendigen Typ behauptet statt dass der Typ erst
+ * durch den Tabellenfund entsteht.
  */
 export function bestimmeRouting(
   klassifikation,
-  { bezugAktenzeichenGefunden = false, ocrConfidence = null } = {}
+  { erinnerungTreffer = null, ocrConfidence = null } = {}
 ) {
   const gruende = [];
   let pfad = "autofall";
@@ -322,9 +344,16 @@ export function bestimmeRouting(
     pfad = "sichtpruefung";
     gruende.push("dokumenttyp = sonstiges, nie Autofall");
   }
-  if (klassifikation.dokumenttyp === "erinnerungsschreiben" && !bezugAktenzeichenGefunden) {
-    pfad = "sichtpruefung";
-    gruende.push("erinnerungsschreiben: bezug_aktenzeichen nicht im Bestand auffindbar");
+  if (ERINNERUNG_TYPEN.includes(klassifikation.dokumenttyp)) {
+    if (!erinnerungTreffer) {
+      pfad = "sichtpruefung";
+      gruende.push(`${klassifikation.dokumenttyp}: bezug_aktenzeichen nicht im Bestand auffindbar`);
+    } else if (erinnerungTreffer.tabelle !== ERWARTETE_TABELLE_ERINNERUNG[klassifikation.dokumenttyp]) {
+      pfad = "sichtpruefung";
+      gruende.push(
+        `${klassifikation.dokumenttyp}: Aktenzeichen gefunden, aber in ${erinnerungTreffer.tabelle} statt im erwarteten ${ERWARTETE_TABELLE_ERINNERUNG[klassifikation.dokumenttyp]} - Typzuordnung unsicher`
+      );
+    }
   }
   if (
     klassifikation.wurde_gekuerzt &&

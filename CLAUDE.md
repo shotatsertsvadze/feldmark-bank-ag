@@ -10,7 +10,7 @@ Feldmark Bank AG — a portfolio/Abschlussprojekt for a Digitalisierungsmanager 
 
 ## Project plan — goals and direction
 
-**Why this project exists, and why it's narrow on purpose.** This is a portfolio/Abschlussprojekt for the Digitalisierungsmanager bootcamp. The user has real fintech experience specifically with the Pfändung/Auskunftsersuchen process family, so the project deliberately goes deep on this one process rather than building a generic bank intranet (no employee directory, ticketing, etc.) — see KONTEXT.md's "Projektrichtung geklärt" entry. The goal is to demonstrate, on one real process, how a bank/fintech can simplify, automate, and digitize intake and deadline handling — grounded in the bootcamp's four core methods (Reifegradmodell, Pareto, Ishikawa, 5-Why) as practical tools, not just shipped code. Process analysis and software are meant to be one connected piece of work, not two separate deliverables.
+**Why this project exists, and why it's narrow on purpose.** This is a portfolio/Abschlussprojekt for the Digitalisierungsmanager bootcamp, still pending submission (presentation, tests, live demo required) and also meant to stand as a portfolio piece afterward. The user has real fintech experience specifically with the Pfändung/Auskunftsersuchen process family, so the project deliberately goes deep on exactly these two processes end-to-end (including their reminder variants) rather than building a generic bank intranet (no employee directory, ticketing, etc.) — see KONTEXT.md's "Projektrichtung geklärt" entry. The goal is a practical, understandable, fast, and representative working system: real OCR/classification, real server-side HITL gates, real deadline automation, real legally-complete generated declarations — not a process-analysis exercise. The bootcamp's four core methods (Reifegradmodell, Pareto, Ishikawa, 5-Why) were used during early scoping but are intentionally not part of this repo (see `docs/code_review/` and KONTEXT.md for that history) — they live in the presentation materials, not the codebase. Don't reintroduce methodology docs/framing here without checking with the user first.
 
 **Definition of done**, per `pfaendungs-bauplan.pdf` (a 10-phase build-and-acceptance checklist the user tracks progress against):
 - Audit trail complete and self-explanatory for every status change
@@ -87,10 +87,6 @@ feldmark_fristueberwachung*.json    n8n workflow exports (Pfändung sweep + its 
                                      for weeks). Don't assume the JSON reflects current live behavior;
                                      verify against the live workflow via the n8n API/UI before relying on
                                      or re-exporting it.
-
-*.html                              Process analysis docs (Ist-/Soll-Analyse, BPMN, Reifegradmodell/
-                                     Pareto/Ishikawa/5-Why, P-Konto-Ergänzungskonzept) — see README.md's
-                                     "Methodik" section for what each one covers.
 
 docs/code_review/                   Dated code-review reports with prioritized, checkable action items.
 docs/testmatrix.md                  Living, consolidated test matrix (not dated/snapshot like the code

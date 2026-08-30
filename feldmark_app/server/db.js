@@ -35,6 +35,22 @@ function getPool() {
 // des n8n-Sweeps, nicht dieses Servers.
 const FRIST_TAGE = 14;
 
+// Das Extraktionsmodell gibt Datumsangaben wortwoertlich wieder, wie sie im
+// Dokument stehen - also deutsches TT.MM.JJJJ, nicht ISO. Ungewandelt an
+// Postgres durchgereicht, interpretiert dessen Default-DateStyle (MDY) das
+// als Monat.Tag.Jahr: bei Tag > 12 wirft das einen harten Fehler
+// ("date/time field value out of range"), der die ganze Fallanlage
+// blockiert; bei Tag <= 12 vertauscht es Tag und Monat still und legt ein
+// falsches Datum an. Deshalb hier hart auf ISO normalisieren, bevor der
+// Wert in eine date-Spalte geht.
+function normalisiereDeutschesDatum(wert) {
+  if (!wert) return null;
+  const treffer = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(wert.trim());
+  if (!treffer) return wert;
+  const [, tag, monat, jahr] = treffer;
+  return `${jahr}-${monat.padStart(2, "0")}-${tag.padStart(2, "0")}`;
+}
+
 function addTage(datumIso, tage) {
   const d = new Date(`${datumIso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + tage);
@@ -202,7 +218,7 @@ export async function legeAuskunftsersuchenFallAn(klassifikation, eingang) {
       kopf.aktenzeichen,
       kopf.ausstellende_stelle,
       ae.betroffene_person_name,
-      ae.betroffene_person_geburtsdatum || null,
+      normalisiereDeutschesDatum(ae.betroffene_person_geburtsdatum),
       ae.tatvorwurf || null,
       ae.angefragte_punkte || [],
       ae.vertraulich ?? false,
@@ -273,18 +289,26 @@ export async function protokolliereErinnerungErhalten(tabelle, fallId, eingangsd
   await protokolliere(protokollTabelle, fallId, "erinnerung_erhalten", eingangsdatumIso);
 }
 
-/** Sammelpunkt fuer alles, was laut Routing kein Autofall wird. */
-export async function legeInSichtpruefungAn({ id, dateiname, klassifikation, routing, ansichtUrl, eingangsdatum }) {
+/**
+ * Sammelpunkt fuer alles, was laut Routing kein Autofall wird.
+ * einordnung trennt "echter Fall, nur Konfidenz zu niedrig"
+ * (niedrige_konfidenz) von "gehoert gar nicht zu Pfaendung/
+ * Auskunftsersuchen" (nicht_zugeordnet) - der Aufrufer (server/index.js)
+ * bestimmt das anhand von dokumenttyp === 'sonstiges' bzw.
+ * plausibilitaet_ok === false.
+ */
+export async function legeInSichtpruefungAn({ id, dateiname, klassifikation, routing, ansichtUrl, eingangsdatum, einordnung }) {
   await getPool().query(
     `INSERT INTO feldmark.sichtpruefung_warteschlange
-       (id, dateiname, dokumenttyp, konfidenz_typ, plausibilitaet_ok,
+       (id, dateiname, dokumenttyp, einordnung, konfidenz_typ, plausibilitaet_ok,
         plausibilitaet_begruendung, routing_gruende, klassifikation,
         rohtext_auszug, ansicht_url, eingangsdatum)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
     [
       id,
       dateiname,
       klassifikation.dokumenttyp,
+      einordnung,
       klassifikation.konfidenz_typ,
       klassifikation.plausibilitaet_ok,
       klassifikation.plausibilitaet_begruendung,
@@ -354,7 +378,7 @@ export async function listeOffeneFaelle() {
 /** Offene Eintraege der Sichtpruefungs-Warteschlange, aeltester zuerst. */
 export async function listeSichtpruefung() {
   const { rows } = await getPool().query(
-    `SELECT id, dateiname, dokumenttyp, konfidenz_typ, plausibilitaet_ok,
+    `SELECT id, dateiname, dokumenttyp, einordnung, konfidenz_typ, plausibilitaet_ok,
             plausibilitaet_begruendung, routing_gruende,
             to_char(eingangsdatum, 'YYYY-MM-DD') AS eingangsdatum, erzeugt_am
      FROM   feldmark.sichtpruefung_warteschlange
@@ -376,7 +400,10 @@ export async function ermittleFallMitErweiterung(fallId) {
             e.p_konto_freibetrag_erhoehung, e.p_konto_benachrichtigt_am,
             e.guthaben_eur, e.guthaben_erfasst_am, e.guthaben_erfasst_von, e.erklaerung_text,
             e.erklaerung_erzeugt_am, e.erklaerung_freigegeben_von, e.erklaerung_freigegeben_am,
-            e.erklaerung_versendet_von, e.erklaerung_versendet_am
+            e.erklaerung_versendet_von, e.erklaerung_versendet_am,
+            e.unpfaendbarkeit_907_geprueft,
+            to_char(e.unpfaendbarkeit_907_festgestellt_am, 'YYYY-MM-DD') AS unpfaendbarkeit_907_festgestellt_am,
+            e.gemeinschaftskonto_geprueft, e.ist_gemeinschaftskonto
      FROM   feldmark.pfaendung_faelle f
      JOIN   feldmark.pfaendung_erweiterung e ON e.fall_id = f.fall_id
      WHERE  f.fall_id = $1`,
@@ -390,7 +417,7 @@ export async function ermittleFallMitErweiterung(fallId) {
  * Pflichtangabe 3 nach § 840 ZPO). Namensabgleich ist bewusst simpel
  * (exakter Textvergleich, case-insensitive) - ein robuster Identitaets-
  * abgleich (IBAN/Geburtsdatum) ist im aktuellen Datenmodell nicht
- * vorhanden, siehe Ergaenzungskonzept, offene Punkte.
+ * vorhanden.
  */
 export async function findeAndereOffenePfaendungen(schuldner, fallIdAusschliessen) {
   const { rows } = await getPool().query(
@@ -427,7 +454,17 @@ export async function findeAndereOffenePfaendungen(schuldner, fallIdAusschliesse
  */
 export async function aktualisiereErweiterung(
   fallId,
-  { istPKonto, freibetragErhoehungEur, guthabenEur, guthabenErfasstVon, pKontoGeprueft }
+  {
+    istPKonto,
+    freibetragErhoehungEur,
+    guthabenEur,
+    guthabenErfasstVon,
+    pKontoGeprueft,
+    unpfaendbarkeit907Geprueft,
+    unpfaendbarkeit907FestgestelltAm,
+    gemeinschaftskontoGeprueft,
+    istGemeinschaftskonto,
+  }
 ) {
   const { rows } = await getPool().query(
     `WITH vorher AS (
@@ -439,11 +476,34 @@ export async function aktualisiereErweiterung(
             guthaben_eur = COALESCE($4, e.guthaben_eur),
             guthaben_erfasst_am = CASE WHEN $4 IS NOT NULL THEN now() ELSE e.guthaben_erfasst_am END,
             guthaben_erfasst_von = CASE WHEN $4 IS NOT NULL THEN $5 ELSE e.guthaben_erfasst_von END,
-            p_konto_geprueft = e.p_konto_geprueft OR COALESCE($6, false)
+            p_konto_geprueft = e.p_konto_geprueft OR COALESCE($6, false),
+            unpfaendbarkeit_907_geprueft = e.unpfaendbarkeit_907_geprueft OR COALESCE($7, false),
+            -- Nicht COALESCE($8, ...): $7 IS NOT NULL markiert "dieser
+            -- Aufruf traegt eine bewusste Eingabe fuer diesen Abschnitt",
+            -- dann gilt $8 woertlich - auch wenn das NULL ist (Nutzer
+            -- wechselt von "festgestellt am X" zurueck auf "nicht
+            -- festgestellt"). COALESCE wuerde dieses Zuruecksetzen auf
+            -- NULL stillschweigend verschlucken und die alte Datum stehen
+            -- lassen (Bug, siehe Code-Review 2026-08-30).
+            unpfaendbarkeit_907_festgestellt_am =
+              CASE WHEN $7 IS NOT NULL THEN $8 ELSE e.unpfaendbarkeit_907_festgestellt_am END,
+            gemeinschaftskonto_geprueft = e.gemeinschaftskonto_geprueft OR COALESCE($9, false),
+            ist_gemeinschaftskonto = COALESCE($10, e.ist_gemeinschaftskonto)
      FROM   vorher
      WHERE  e.fall_id = $1
      RETURNING e.*, vorher.p_konto_geprueft AS p_konto_geprueft_vorher`,
-    [fallId, istPKonto ?? null, freibetragErhoehungEur ?? null, guthabenEur ?? null, guthabenErfasstVon ?? null, pKontoGeprueft ?? null]
+    [
+      fallId,
+      istPKonto ?? null,
+      freibetragErhoehungEur ?? null,
+      guthabenEur ?? null,
+      guthabenErfasstVon ?? null,
+      pKontoGeprueft ?? null,
+      unpfaendbarkeit907Geprueft ?? null,
+      unpfaendbarkeit907FestgestelltAm ?? null,
+      gemeinschaftskontoGeprueft ?? null,
+      istGemeinschaftskonto ?? null,
+    ]
   );
   if (!rows[0]) return null;
   const { p_konto_geprueft_vorher, ...zeile } = rows[0];

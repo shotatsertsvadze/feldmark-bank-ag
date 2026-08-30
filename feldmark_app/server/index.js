@@ -7,7 +7,7 @@ import multer from "multer";
 import { randomUUID } from "node:crypto";
 
 import { istUnterstuetzterTyp, normalisiereFuerOcr } from "./convert.js";
-import { ocrDokument, klassifiziereUndExtrahiere, bestimmeRouting, PFAENDUNGSBLOCK_TYPEN } from "./mistral.js";
+import { ocrDokument, klassifiziereUndExtrahiere, bestimmeRouting, PFAENDUNGSBLOCK_TYPEN, ERINNERUNG_TYPEN } from "./mistral.js";
 import { erzeugeDrittschuldnererklaerung } from "./pkonto_drittschuldner.js";
 import { erzeugeAuskunftsersuchenAntwort } from "./auskunftsersuchen_antwort.js";
 import {
@@ -80,12 +80,21 @@ async function verarbeiteDatei(file, eingang) {
     const ocrErgebnis = await ocrDokument(bytes, mimeType);
     const klassifikation = await klassifiziereUndExtrahiere(ocrErgebnis.markdown, ocrErgebnis.ocr_confidence);
 
+    // Fuer die Sichtpruefung: "gehoert nicht zu Pfaendung/Auskunftsersuchen"
+    // (dokumenttyp = sonstiges oder plausibilitaet_ok = false) vs. "echter
+    // Fall, nur Konfidenz zu niedrig" - unabhaengig vom Routing-Pfad, gilt
+    // fuer beide legeInSichtpruefungAn()-Aufrufe unten.
+    const einordnung =
+      klassifikation.dokumenttyp === "sonstiges" || klassifikation.plausibilitaet_ok === false
+        ? "nicht_zugeordnet"
+        : "niedrige_konfidenz";
+
     let erinnerungTreffer = null;
-    if (klassifikation.dokumenttyp === "erinnerungsschreiben") {
+    if (ERINNERUNG_TYPEN.includes(klassifikation.dokumenttyp)) {
       erinnerungTreffer = await db.findeFallZuAktenzeichen(klassifikation.erinnerung.bezug_aktenzeichen);
     }
     const routing = bestimmeRouting(klassifikation, {
-      bezugAktenzeichenGefunden: !!erinnerungTreffer,
+      erinnerungTreffer,
       ocrConfidence: ocrErgebnis.ocr_confidence,
     });
 
@@ -98,9 +107,10 @@ async function verarbeiteDatei(file, eingang) {
         routing,
         ansichtUrl: basis.ansicht_url,
         eingangsdatum: eingang.zustelldatum,
+        einordnung,
       });
       fallergebnis = { angelegt: false, tabelle: "feldmark.sichtpruefung_warteschlange" };
-    } else if (klassifikation.dokumenttyp === "erinnerungsschreiben") {
+    } else if (ERINNERUNG_TYPEN.includes(klassifikation.dokumenttyp)) {
       await db.protokolliereErinnerungErhalten(erinnerungTreffer.tabelle, erinnerungTreffer.fall_id, eingang.zustelldatum);
       fallergebnis = { angelegt: false, zugeordnet_zu: erinnerungTreffer.fall_id, tabelle: erinnerungTreffer.tabelle };
     } else if (PFAENDUNGSBLOCK_TYPEN.includes(klassifikation.dokumenttyp) || klassifikation.dokumenttyp === "auskunftsersuchen") {
@@ -135,6 +145,7 @@ async function verarbeiteDatei(file, eingang) {
         routing,
         ansichtUrl: basis.ansicht_url,
         eingangsdatum: eingang.zustelldatum,
+        einordnung,
       });
       fallergebnis = { angelegt: false, tabelle: "feldmark.sichtpruefung_warteschlange" };
     }
@@ -252,13 +263,27 @@ app.get("/api/faelle/:fallId/erweiterung", async (req, res) => {
 // Status ueberhaupt geprueft hat, die Benachrichtigung ungewollt ausgeloest).
 app.put("/api/faelle/:fallId/erweiterung", async (req, res) => {
   try {
-    const { ist_p_konto, freibetrag_erhoehung_eur, guthaben_eur, guthaben_erfasst_von, p_konto_geprueft } = req.body;
+    const {
+      ist_p_konto,
+      freibetrag_erhoehung_eur,
+      guthaben_eur,
+      guthaben_erfasst_von,
+      p_konto_geprueft,
+      unpfaendbarkeit_907_geprueft,
+      unpfaendbarkeit_907_festgestellt_am,
+      gemeinschaftskonto_geprueft,
+      ist_gemeinschaftskonto,
+    } = req.body;
     const ergebnis = await db.aktualisiereErweiterung(req.params.fallId, {
       istPKonto: typeof ist_p_konto === "boolean" ? ist_p_konto : null,
       freibetragErhoehungEur: freibetrag_erhoehung_eur ?? null,
       guthabenEur: guthaben_eur ?? null,
       guthabenErfasstVon: guthaben_erfasst_von ?? null,
       pKontoGeprueft: p_konto_geprueft === true ? true : null,
+      unpfaendbarkeit907Geprueft: unpfaendbarkeit_907_geprueft === true ? true : null,
+      unpfaendbarkeit907FestgestelltAm: unpfaendbarkeit_907_festgestellt_am ?? null,
+      gemeinschaftskontoGeprueft: gemeinschaftskonto_geprueft === true ? true : null,
+      istGemeinschaftskonto: typeof ist_gemeinschaftskonto === "boolean" ? ist_gemeinschaftskonto : null,
     });
     if (!ergebnis) return res.status(404).json({ fehler: "Fall nicht gefunden." });
 

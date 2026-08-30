@@ -1,8 +1,6 @@
 /**
  * P-Konto-Pfaendbarkeitsberechnung und automatisierte Drittschuldner-
- * erklaerung (§ 840 ZPO). Siehe
- * Pfaendung_PKonto_Drittschuldnererklaerung_Ergaenzung.html fuer die
- * vollstaendige Herleitung.
+ * erklaerung (§ 840 ZPO).
  *
  * Bewusst deterministisch, kein LLM-Aufruf: die Erklaerung ist die
  * rechtsverbindliche Aussage der Bank gegenueber dem Glaeubiger, nicht
@@ -12,8 +10,7 @@
  */
 
 // Pfaendungsfreigrenzenbekanntmachung 2026, gueltig ab 1.7.2026.
-// Aendert sich turnusmaessig per Gesetz - siehe Ergaenzungskonzept
-// Abschnitt 1.2 fuer die Quellen. Regelmaessig pruefen/aktualisieren.
+// Aendert sich turnusmaessig per Gesetz - regelmaessig pruefen/aktualisieren.
 export const P_KONTO_GRUNDFREIBETRAG_EUR = 1590.0;
 
 function runden2(zahl) {
@@ -51,13 +48,15 @@ export function berechneRang(fallId, alleOffenenFaelleDesSchuldners) {
 
 /**
  * Erzeugt den Text der Drittschuldnererklaerung nach § 840 ZPO.
- * Deckt die drei aus vorhandenen Falldaten erreichbaren Zustaende ab
- * (voll / teilweise / kein pfaendbares Guthaben). Die vierte im
- * Ergaenzungskonzept beschriebene Variante (fristwahrende Negativerklaerung
- * bei nicht zuordenbarem Schuldner) ist hier nicht implementiert, weil
- * solche Faelle im aktuellen Routing gar nicht in
- * feldmark.pfaendung_faelle landen, sondern in der Sichtpruefung - es gibt
- * also aktuell keinen erreichbaren Zustand, der sie ausloesen wuerde.
+ * Deckt die drei Pflichtangaben nach § 840 Abs. 1 ZPO ab (voll / teilweise
+ * / kein pfaendbares Guthaben, Ansprueche anderer Personen, Vorpfaendungen)
+ * sowie die zwei zusaetzlichen, nach § 840 Abs. 2 ZPO speziell fuer
+ * Kontopfaendungen vorgeschriebenen Angaben (Unpfaendbarkeit nach § 907
+ * ZPO, Kontoart). Eine fristwahrende Negativerklaerung bei nicht
+ * zuordenbarem Schuldner ist hier nicht implementiert, weil solche Faelle
+ * im aktuellen Routing gar nicht in feldmark.pfaendung_faelle landen,
+ * sondern in der Sichtpruefung - es gibt also aktuell keinen erreichbaren
+ * Zustand, der sie ausloesen wuerde.
  *
  * @param {object} fall - Zeile aus feldmark.pfaendung_faelle.
  * @param {object} erweiterung - Zeile aus feldmark.pfaendung_erweiterung.
@@ -78,6 +77,17 @@ export function erzeugeDrittschuldnererklaerung(fall, erweiterung, andereOffeneP
   });
   if (pfaendbar === null) {
     return { ok: false, grund: "Guthaben ist noch nicht erfasst - Erklaerung kann nicht erzeugt werden." };
+  }
+  // § 840 Abs. 2 ZPO: zwei weitere Pflichtangaben bei Kontopfaendungen, die
+  // bis 2026-08-30 in dieser Erklaerung fehlten (siehe docs/code_review/).
+  // Gleiche Disziplin wie oben: nicht generieren, solange nicht explizit
+  // geprueft - eine rechtsverbindliche Erklaerung darf keine unbestaetigte
+  // Angabe enthalten.
+  if (erweiterung.unpfaendbarkeit_907_geprueft !== true) {
+    return { ok: false, grund: "Unpfändbarkeit nach § 907 ZPO ist noch nicht geprüft - Erklärung kann nicht erzeugt werden." };
+  }
+  if (erweiterung.gemeinschaftskonto_geprueft !== true) {
+    return { ok: false, grund: "Kontoart (Gemeinschaftskonto) ist noch nicht geprüft - Erklärung kann nicht erzeugt werden." };
   }
 
   const eur = (n) => n.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -112,6 +122,30 @@ export function erzeugeDrittschuldnererklaerung(fall, erweiterung, andereOffeneP
     pflichtangabe3 = `Die Forderung ist bereits für ${andereOffenePfaendungen.length} weitere${andereOffenePfaendungen.length === 1 ? "n" : ""} Gläubiger gepfändet: ${liste}. Die vorliegende Pfändung steht im Rang ${rang} von ${andereOffenePfaendungen.length + 1}.`;
   }
 
+  let pflichtangabe4;
+  if (erweiterung.unpfaendbarkeit_907_festgestellt_am) {
+    const festgestelltAm = new Date(erweiterung.unpfaendbarkeit_907_festgestellt_am);
+    const zwoelfMonateVorher = new Date();
+    zwoelfMonateVorher.setUTCFullYear(zwoelfMonateVorher.getUTCFullYear() - 1);
+    const innerhalbZwoelfMonaten = festgestelltAm >= zwoelfMonateVorher;
+    pflichtangabe4 = innerhalbZwoelfMonaten
+      ? `Innerhalb der letzten zwölf Monate wurde die Unpfändbarkeit des Guthabens nach § 907 ZPO festgestellt, und zwar am ${festgestelltAm.toLocaleDateString("de-DE")}.`
+      : `Eine Unpfändbarkeitsfeststellung nach § 907 ZPO liegt vor (${festgestelltAm.toLocaleDateString("de-DE")}), diese liegt jedoch außerhalb der letzten zwölf Monate.`;
+  } else {
+    pflichtangabe4 = "Innerhalb der letzten zwölf Monate wurde keine Unpfändbarkeit des Guthabens nach § 907 ZPO festgestellt.";
+  }
+
+  let pflichtangabe5;
+  if (erweiterung.ist_p_konto && erweiterung.ist_gemeinschaftskonto) {
+    pflichtangabe5 = "Bei dem gepfändeten Konto handelt es sich um ein Pfändungsschutzkonto (P-Konto), zugleich geführt als Gemeinschaftskonto.";
+  } else if (erweiterung.ist_p_konto) {
+    pflichtangabe5 = "Bei dem gepfändeten Konto handelt es sich um ein Pfändungsschutzkonto (P-Konto); es ist kein Gemeinschaftskonto.";
+  } else if (erweiterung.ist_gemeinschaftskonto) {
+    pflichtangabe5 = "Bei dem gepfändeten Konto handelt es sich um ein Gemeinschaftskonto; es ist kein Pfändungsschutzkonto (P-Konto).";
+  } else {
+    pflichtangabe5 = "Bei dem gepfändeten Konto handelt es sich weder um ein Pfändungsschutzkonto (P-Konto) noch um ein Gemeinschaftskonto.";
+  }
+
   const text = [
     `DRITTSCHULDNERERKLÄRUNG gemäß § 840 ZPO`,
     ``,
@@ -122,11 +156,13 @@ export function erzeugeDrittschuldnererklaerung(fall, erweiterung, andereOffeneP
     ``,
     `Sehr geehrte Damen und Herren,`,
     ``,
-    `zu dem oben genannten Pfändungs- und Überweisungsbeschluss erklären wir gemäß § 840 Abs. 1 ZPO wie folgt:`,
+    `zu dem oben genannten Pfändungs- und Überweisungsbeschluss erklären wir gemäß § 840 Abs. 1 und Abs. 2 ZPO wie folgt:`,
     ``,
     `1. ${anerkennung}`,
     `2. ${pflichtangabe2}`,
     `3. ${pflichtangabe3}`,
+    `4. ${pflichtangabe4}`,
+    `5. ${pflichtangabe5}`,
     ``,
     `Mit freundlichen Grüßen`,
     `Feldmark Bank AG`,

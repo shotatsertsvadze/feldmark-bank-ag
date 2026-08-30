@@ -42,7 +42,7 @@ Das System übernimmt die drei Schritte, die sich tatsächlich automatisieren la
 
 **Erfassung & Klassifikation**
 - OCR + KI-Extraktion in einem Aufruf (Mistral `mistral-ocr-latest` + `mistral-small-latest`, JSON-Mode)
-- Sechs-Wege-Dokumenttyp-Klassifikation (Pfändung, Auskunftsersuchen, Einziehungs-/Überweisungsverfügung, Erinnerungsschreiben, Sonstiges)
+- Dokumenttyp-Klassifikation nach Pfändung, Pfändungserinnerung, Auskunftsersuchen und Auskunftsersuchenerinnerung (Einziehungs-/Überweisungsverfügung laufen als Varianten der Pfändung); alles andere landet sichtbar gekennzeichnet in der Sichtprüfung statt unbemerkt zu verschwinden
 - Fail-closed-Routing: fehlende Konfidenzwerte gelten als *keine* Konfidenz, nie als automatisches Grünlicht
 - Duplikat- und Erinnerungsschreiben-Erkennung gegen bestehende Aktenzeichen (whitespace-normalisiert)
 
@@ -88,20 +88,6 @@ Zwei Systeme arbeiten dabei zusammen: **PostgreSQL (Supabase)** als alleinige Da
 | Automatisierung | n8n (Cron-Trigger, Postgres-Nodes, Fehler-Workflow) |
 | Bildkonvertierung | Sharp, heic-convert (HEIC/HEIF-Uploads von Handyscans) |
 
-## Methodik
-
-Digitalisierungsprojekte scheitern selten an der Technik — sondern daran, dass niemand sauber hergeleitet hat, *warum* ein Prozessschritt automatisiert werden soll. Deshalb steht vor jeder Code-Zeile eine schriftliche Prozessanalyse mit den im Bootcamp vermittelten Methoden, angewendet auf ein plausibles Mengengerüst (525 Fälle/Monat, davon 43 % ohne pfändbares Guthaben, 12 % mit Datendiskrepanz — Annahmewerte für ein fiktives Szenario, transparent als solche gekennzeichnet):
-
-- **Reifegradmodell** — 5-Stufen-Bewertung je Prozessschritt (Ist → Ziel → tatsächlich erreicht), ehrlich mit Lücken statt schöngerechnet
-- **Pareto-Analyse** — welche zwei Ursachen tragen den Großteil des Sonderaufwands, und wo steckt das größte, bisher ungemessene Fristbudget-Risiko (Papierkanal-Latenz)
-- **Ishikawa-Diagramm** — Ursachenanalyse zu "Prozess ohne Reserve" über Mensch, Prozess, System, Umfeld
-- **5-Why** — ein konkreter Fristausfall-Fall bis zur strukturellen Wurzel zurückverfolgt
-
-📄 [`Pfaendungsprozess_Analyse_Sollkonzept.html`](Pfaendungsprozess_Analyse_Sollkonzept.html) — Ist-Analyse, Soll-Konzept je Prozessast, Annahmenkatalog
-📄 [`Pfaendungsprozess_Methodenanwendung.html`](Pfaendungsprozess_Methodenanwendung.html) — Reifegradmodell, Pareto, Ishikawa, 5-Why
-📄 [`Pfaendungsprozess_BPMN_v5_1.html`](Pfaendungsprozess_BPMN_v5_1.html) — BPMN-Modellierung des Soll-Prozesses
-📄 [`Pfaendung_PKonto_Drittschuldnererklaerung_Ergaenzung.html`](Pfaendung_PKonto_Drittschuldnererklaerung_Ergaenzung.html) — Ergänzungskonzept P-Konto & automatisierte Erklärung
-
 ## Projektstruktur
 
 ```
@@ -118,7 +104,6 @@ feldmark_app/                       Express + React (Vite)
     features/pfaendung-auskunftsersuchen/   Posteingang, Fallübersicht, Prozessdiagramm
 
 *.sql                                Additive Schema-Dateien je Baustein
-*.html                               Prozessanalyse, BPMN, Methodenanwendung
 muster_dateien/                      Testdokumente (inkl. bewusster Plausibilitäts-Fallen)
 ```
 
@@ -144,4 +129,4 @@ Transparenz statt Understatement — das hier ist explizit **nicht** gebaut, mit
 
 ## Über dieses Projekt
 
-Portfolio-Abschlussprojekt im Digitalisierungsmanager-Bootcamp — Prozessanalyse und Software als ein zusammenhängendes Stück Arbeit, nicht getrennt. Gebaut, getestet und iteriert von **Shota Tsertsvadze**.
+Abschlussprojekt im Digitalisierungsmanager-Bootcamp, zugleich Portfolio-Stück — ein lauffähiges System für einen realen Prozess aus eigener Fintech-Praxis, kein Demo-Gerüst. Gebaut, getestet und iteriert von **Shota Tsertsvadze**.

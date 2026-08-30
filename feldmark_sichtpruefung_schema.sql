@@ -5,7 +5,15 @@
 --  Typ-unabhaengiger Sammelpunkt fuer alles, was laut Konfidenz-/
 --  Plausibilitaets-Routing (klassifikations_schema.md) KEIN Autofall wird:
 --  konfidenz_typ < 70, plausibilitaet_ok = false, dokumenttyp = sonstiges,
---  oder erinnerungsschreiben ohne auffindbares bezug_aktenzeichen.
+--  oder eine Pfaendungs-/Auskunftsersuchenerinnerung ohne auffindbares
+--  (oder falsch zugeordnetes) bezug_aktenzeichen.
+--
+--  einordnung trennt zwei fachlich unterschiedliche Gruende, warum ein
+--  Eintrag hier landet: 'niedrige_konfidenz' (echter Fall einer der vier
+--  Prozesstypen, nur die Konfidenz reicht nicht) vs. 'nicht_zugeordnet'
+--  (dokumenttyp = sonstiges oder plausibilitaet_ok = false - gehoert gar
+--  nicht zu Pfaendung/Auskunftsersuchen). Vorher nur ueber dokumenttyp/
+--  plausibilitaet_ok oder Freitext in routing_gruende erschliessbar.
 --
 --  Bewusst eine einzige Tabelle statt einer pro Dokumenttyp: an dieser
 --  Stelle steht der Typ ja gerade NICHT sicher fest (das ist ja der Grund,
@@ -29,8 +37,11 @@ CREATE TABLE feldmark.sichtpruefung_warteschlange (
                                                   'auskunftsersuchen',
                                                   'einziehungsverfuegung',
                                                   'ueberweisungsverfuegung',
-                                                  'erinnerungsschreiben',
+                                                  'pfaendungserinnerung',
+                                                  'auskunftsersuchenerinnerung',
                                                   'sonstiges')),
+    einordnung            text        NOT NULL DEFAULT 'niedrige_konfidenz'
+                          CHECK (einordnung IN ('niedrige_konfidenz', 'nicht_zugeordnet')),
     konfidenz_typ         integer,
     plausibilitaet_ok     boolean,
     plausibilitaet_begruendung text,
@@ -65,43 +76,43 @@ COMMENT ON COLUMN feldmark.sichtpruefung_warteschlange.eingangsdatum IS
 -- Testfaelle aus Schritt 2 (Betriebsrat-Wahlliste, Antwort_ZIS_2016).
 -- ---------------------------------------------------------------------
 INSERT INTO feldmark.sichtpruefung_warteschlange
-    (id, dateiname, dokumenttyp, konfidenz_typ, plausibilitaet_ok,
+    (id, dateiname, dokumenttyp, einordnung, konfidenz_typ, plausibilitaet_ok,
      plausibilitaet_begruendung, routing_gruende, klassifikation,
      rohtext_auszug, eingangsdatum, status)
 VALUES
-    -- niedrige Typ-Konfidenz
-    (gen_random_uuid(), 'unklarer_scan.jpg', 'pfaendungsschreiben', 55, true,
+    -- niedrige Typ-Konfidenz - echter Pfaendungsfall, nur die Konfidenz reicht nicht
+    (gen_random_uuid(), 'unklarer_scan.jpg', 'pfaendungsschreiben', 'niedrige_konfidenz', 55, true,
      'Stempel und Unterschrift teilweise unleserlich.',
      ARRAY['konfidenz_typ (55) unter Schwelle 70'],
      '{"dokumenttyp":"pfaendungsschreiben","konfidenz_typ":55}'::jsonb,
      'Amtsgericht ... (Rest schwer lesbar)', CURRENT_DATE - 1, 'offen'),
 
-    -- Wortreffer ohne passende Struktur - der Betriebsrat-Testfall aus Schritt 2
+    -- Wortreffer ohne passende Struktur - gehoert nicht zu unseren Prozessen
     (gen_random_uuid(), 'auskunftsersuchen-beim-arbeitgeber-zur-aufstellung-der-wahlerliste.jpg',
-     'sonstiges', 95, false,
+     'sonstiges', 'nicht_zugeordnet', 95, false,
      'Kein bankbezogenes Vollstreckungs- oder Ermittlungsersuchen erkennbar.',
      ARRAY['plausibilitaet_ok = false', 'dokumenttyp = sonstiges, nie Autofall'],
      '{"dokumenttyp":"sonstiges","konfidenz_typ":95,"plausibilitaet_ok":false}'::jsonb,
      'Muster: Auskunftsersuchen beim Arbeitgeber zur Aufstellung der Wählerliste ...',
      CURRENT_DATE - 2, 'offen'),
 
-    -- zweiter Plausibilitaets-Testfall aus Schritt 2
-    (gen_random_uuid(), 'Antwort_ZIS_2016.jpeg', 'sonstiges', 100, false,
+    -- zweiter Plausibilitaets-Testfall - gehoert ebenfalls nicht zu unseren Prozessen
+    (gen_random_uuid(), 'Antwort_ZIS_2016.jpeg', 'sonstiges', 'nicht_zugeordnet', 100, false,
      'Kein bankbezogener Vollstreckungs- oder Ermittlungsinhalt erkennbar, Absender ist eine Polizeibehörde ohne Bezug zu Bankangelegenheiten.',
      ARRAY['plausibilitaet_ok = false', 'dokumenttyp = sonstiges, nie Autofall'],
      '{"dokumenttyp":"sonstiges","konfidenz_typ":100,"plausibilitaet_ok":false}'::jsonb,
      'Landesamt für Zentrale Polizeiliche Dienste Nordrhein-Westfalen ...',
      CURRENT_DATE - 3, 'offen'),
 
-    -- Erinnerungsschreiben ohne auffindbares Aktenzeichen im Bestand
-    (gen_random_uuid(), 'erinnerung_unbekannt.pdf', 'erinnerungsschreiben', 90, true,
-     'Formal ein Erinnerungsschreiben, Bezugsaktenzeichen aber in keiner Falltabelle vorhanden.',
-     ARRAY['erinnerungsschreiben: Aktenzeichen-Abgleich gegen Bestand fehlt/erfolglos'],
-     '{"dokumenttyp":"erinnerungsschreiben","konfidenz_typ":90,"erinnerung":{"bezug_aktenzeichen":"99 M 0000/26"}}'::jsonb,
+    -- Pfaendungserinnerung ohne auffindbares Aktenzeichen im Bestand - echter Fall, nur ungeklaert
+    (gen_random_uuid(), 'erinnerung_unbekannt.pdf', 'pfaendungserinnerung', 'niedrige_konfidenz', 90, true,
+     'Formal eine Pfaendungserinnerung, Bezugsaktenzeichen aber in keiner Falltabelle vorhanden.',
+     ARRAY['pfaendungserinnerung: bezug_aktenzeichen nicht im Bestand auffindbar'],
+     '{"dokumenttyp":"pfaendungserinnerung","konfidenz_typ":90,"erinnerung":{"bezug_aktenzeichen":"99 M 0000/26"}}'::jsonb,
      'Erinnerung an unser Schreiben vom ... Az. 99 M 0000/26', CURRENT_DATE - 1, 'offen'),
 
     -- bereits geprueft und uebernommen - zeigt den Abschluss-Zustand
-    (gen_random_uuid(), 'geprueft_beispiel.jpg', 'pfaendungsschreiben', 60, true,
+    (gen_random_uuid(), 'geprueft_beispiel.jpg', 'pfaendungsschreiben', 'niedrige_konfidenz', 60, true,
      'Nach Sichtpruefung als echter Fall bestaetigt.',
      ARRAY['konfidenz_typ (60) unter Schwelle 70'],
      '{"dokumenttyp":"pfaendungsschreiben","konfidenz_typ":60}'::jsonb,
@@ -118,7 +129,7 @@ WHERE  dateiname = 'geprueft_beispiel.jpg';
 -- =====================================================================
 
 -- Offene Warteschlange, aeltester Fall zuerst:
---   SELECT id, dateiname, dokumenttyp, plausibilitaet_ok, routing_gruende, erzeugt_am
+--   SELECT id, dateiname, dokumenttyp, einordnung, plausibilitaet_ok, routing_gruende, erzeugt_am
 --   FROM   feldmark.sichtpruefung_warteschlange
 --   WHERE  status = 'offen'
 --   ORDER  BY erzeugt_am;

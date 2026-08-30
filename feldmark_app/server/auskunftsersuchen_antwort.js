@@ -1,7 +1,6 @@
 /**
  * Strukturierte Antwort auf ein Auskunftsersuchen (§§ 161, 161a, 95 StPO).
- * Umsetzung von Ast E (E3/E4) aus Pfaendungsprozess_Analyse_Sollkonzept.html,
- * Abschnitt 3.5 - siehe KONTEXT.md fuer die Redesign-Analyse.
+ * Siehe KONTEXT.md fuer die Redesign-Analyse.
  *
  * Bewusst deterministisch, kein LLM-Aufruf: gleiche Begruendung wie bei
  * erzeugeDrittschuldnererklaerung() in pkonto_drittschuldner.js - die

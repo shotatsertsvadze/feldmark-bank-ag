@@ -191,10 +191,16 @@ export default function Falluebersicht({ reloadSignal }) {
               </div>
             ) : (
               <div>
-                {sichtpruefung.map((s) => (
+                {sichtpruefung.map((s) => {
+                  const nichtZugeordnet = s.einordnung === "nicht_zugeordnet";
+                  return (
                   <div className="sichtpruefung-zeile" key={s.id}>
                     <div className="sichtpruefung-zeile__stempel">
-                      <Stempel typLabel={DOKUMENTTYP_LABEL[s.dokumenttyp] || s.dokumenttyp} wert="Prüfen" farbe="ochre" />
+                      <Stempel
+                        typLabel={DOKUMENTTYP_LABEL[s.dokumenttyp] || s.dokumenttyp}
+                        wert={nichtZugeordnet ? "Gehört nicht zu diesen Prozessen" : "Prüfen"}
+                        farbe={nichtZugeordnet ? "slate" : "ochre"}
+                      />
                     </div>
                     <div className="sichtpruefung-zeile__info">
                       <span className="sichtpruefung-zeile__datei">{s.dateiname}</span>
@@ -210,7 +216,8 @@ export default function Falluebersicht({ reloadSignal }) {
                       </div>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

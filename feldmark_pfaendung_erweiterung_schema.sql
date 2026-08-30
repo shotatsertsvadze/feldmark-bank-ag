@@ -47,6 +47,17 @@ CREATE TABLE IF NOT EXISTS feldmark.pfaendung_erweiterung (
     guthaben_erfasst_am          timestamptz,
     guthaben_erfasst_von         text,
 
+    -- Unpfaendbarkeit nach § 907 ZPO und Kontoart (P-Konto/Gemeinschafts-
+    -- konto) - zwei der fuenf nach § 840 Abs. 2 ZPO fuer Kontopfaendungen
+    -- vorgeschriebenen Angaben, die bisher in der Erklaerung fehlten.
+    -- Gleicher Tri-State-Aufbau wie p_konto_geprueft oben: "noch nicht
+    -- geprueft" muss von einer bewussten Verneinung unterscheidbar sein,
+    -- sonst kann die Erklaerung mit unbestaetigten Angaben generiert werden.
+    unpfaendbarkeit_907_geprueft      boolean     NOT NULL DEFAULT false,
+    unpfaendbarkeit_907_festgestellt_am date,
+    gemeinschaftskonto_geprueft       boolean     NOT NULL DEFAULT false,
+    ist_gemeinschaftskonto            boolean     NOT NULL DEFAULT false,
+
     -- Erzeugte Drittschuldnererklaerung (§ 840 ZPO) — Text plus
     -- Freigabe-/Versand-Nachweis (zwei getrennte Schritte seit dem
     -- Freigabe-/Versand-Trennung-Redesign, siehe KONTEXT.md), zusaetzlich
@@ -62,8 +73,15 @@ CREATE TABLE IF NOT EXISTS feldmark.pfaendung_erweiterung (
 
 COMMENT ON TABLE feldmark.pfaendung_erweiterung IS
     '1:1-Erweiterung zu feldmark.pfaendung_faelle fuer P-Konto-Pruefung und
-     automatisierte Drittschuldnererklaerung. Siehe
-     Pfaendung_PKonto_Drittschuldnererklaerung_Ergaenzung.html.';
+     automatisierte Drittschuldnererklaerung (§ 840 ZPO).';
+
+COMMENT ON COLUMN feldmark.pfaendung_erweiterung.unpfaendbarkeit_907_festgestellt_am IS
+    'NULL = nicht festgestellt (oder noch nicht geprueft, siehe
+     unpfaendbarkeit_907_geprueft). Ein Datum bedeutet: an diesem Tag wurde
+     die Unpfaendbarkeit des Guthabens nach § 907 ZPO festgesetzt - "in den
+     letzten zwoelf Monaten" wird bei Erzeugung der Erklaerung gegen das
+     aktuelle Datum berechnet, nicht als eigenes Bool gespeichert (sonst
+     wird der Wert nach zwoelf Monaten still falsch).';
 
 COMMENT ON COLUMN feldmark.pfaendung_erweiterung.guthaben_erfasst_von IS
     'Kuerzel/E-Mail der Person, die das Guthaben zuletzt gespeichert hat.

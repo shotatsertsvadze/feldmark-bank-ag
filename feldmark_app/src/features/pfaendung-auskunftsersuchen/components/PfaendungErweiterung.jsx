@@ -62,6 +62,14 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
   const [guthaben, setGuthaben] = useState("");
   const [guthabenErfasstVon, setGuthabenErfasstVon] = useState("");
 
+  // Zwei weitere Pflichtangaben nach § 840 Abs. 2 ZPO (Kontopfaendung) -
+  // gleiches Tri-State-Muster wie P-Konto oben: "noch nicht geprueft" muss
+  // von einer bewussten Verneinung unterscheidbar sein.
+  const [unpfaendbarkeit907Geprueft, setUnpfaendbarkeit907Geprueft] = useState(false);
+  const [unpfaendbarkeit907FestgestelltAm, setUnpfaendbarkeit907FestgestelltAm] = useState("");
+  const [gemeinschaftskontoGeprueft, setGemeinschaftskontoGeprueft] = useState(false);
+  const [istGemeinschaftskonto, setIstGemeinschaftskonto] = useState(false);
+
   useEffect(() => {
     let abgebrochen = false;
     setLaedt(true);
@@ -75,6 +83,10 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
         setFreibetragErhoehung(f.p_konto_freibetrag_erhoehung && Number(f.p_konto_freibetrag_erhoehung) !== 0 ? String(f.p_konto_freibetrag_erhoehung) : "");
         setGuthaben(f.guthaben_eur != null ? String(f.guthaben_eur) : "");
         setGuthabenErfasstVon(f.guthaben_erfasst_von || "");
+        setUnpfaendbarkeit907Geprueft(!!f.unpfaendbarkeit_907_geprueft);
+        setUnpfaendbarkeit907FestgestelltAm(f.unpfaendbarkeit_907_festgestellt_am || "");
+        setGemeinschaftskontoGeprueft(!!f.gemeinschaftskonto_geprueft);
+        setIstGemeinschaftskonto(!!f.ist_gemeinschaftskonto);
       })
       .catch((e) => !abgebrochen && setFehler(String(e.message || e)))
       .finally(() => !abgebrochen && setLaedt(false));
@@ -107,6 +119,10 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
         guthabenEur: guthaben === "" ? null : Number(guthaben),
         guthabenErfasstVon: guthabenErfasstVon.trim() === "" ? null : guthabenErfasstVon.trim(),
         pKontoGeprueft,
+        unpfaendbarkeit907Geprueft,
+        unpfaendbarkeit907FestgestelltAm: unpfaendbarkeit907FestgestelltAm === "" ? null : unpfaendbarkeit907FestgestelltAm,
+        gemeinschaftskontoGeprueft,
+        istGemeinschaftskonto,
       });
       setErw(erweiterung);
       return { ok: true, p_konto_benachrichtigung_ausgeloest };
@@ -276,6 +292,83 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
           </div>
         )}
         <div className="feld">
+          <label>Unpfändbarkeit nach § 907 ZPO</label>
+          <div className="pkonto-status">
+            {!unpfaendbarkeit907Geprueft && (
+              <label className="pkonto-status__ungeprueft">
+                <input type="radio" name={`unpfaendbarkeit-${fallId}`} checked readOnly disabled /> Noch nicht geprüft
+              </label>
+            )}
+            <label>
+              <input
+                type="radio"
+                name={`unpfaendbarkeit-${fallId}`}
+                checked={unpfaendbarkeit907Geprueft && !unpfaendbarkeit907FestgestelltAm}
+                onChange={() => {
+                  setUnpfaendbarkeit907FestgestelltAm("");
+                  setUnpfaendbarkeit907Geprueft(true);
+                }}
+              />{" "}
+              Nicht festgestellt
+            </label>
+            <label>
+              <input
+                type="radio"
+                name={`unpfaendbarkeit-${fallId}`}
+                checked={unpfaendbarkeit907Geprueft && !!unpfaendbarkeit907FestgestelltAm}
+                onChange={() => {
+                  setUnpfaendbarkeit907Geprueft(true);
+                  if (!unpfaendbarkeit907FestgestelltAm) {
+                    setUnpfaendbarkeit907FestgestelltAm(new Date().toISOString().slice(0, 10));
+                  }
+                }}
+              />{" "}
+              Festgestellt am
+            </label>
+            {unpfaendbarkeit907Geprueft && !!unpfaendbarkeit907FestgestelltAm && (
+              <input
+                type="date"
+                value={unpfaendbarkeit907FestgestelltAm}
+                onChange={(e) => setUnpfaendbarkeit907FestgestelltAm(e.target.value)}
+              />
+            )}
+          </div>
+        </div>
+        <div className="feld">
+          <label>Kontoart: Gemeinschaftskonto</label>
+          <div className="pkonto-status">
+            {!gemeinschaftskontoGeprueft && (
+              <label className="pkonto-status__ungeprueft">
+                <input type="radio" name={`gemeinschaftskonto-${fallId}`} checked readOnly disabled /> Noch nicht geprüft
+              </label>
+            )}
+            <label>
+              <input
+                type="radio"
+                name={`gemeinschaftskonto-${fallId}`}
+                checked={gemeinschaftskontoGeprueft && !istGemeinschaftskonto}
+                onChange={() => {
+                  setIstGemeinschaftskonto(false);
+                  setGemeinschaftskontoGeprueft(true);
+                }}
+              />{" "}
+              Kein Gemeinschaftskonto
+            </label>
+            <label>
+              <input
+                type="radio"
+                name={`gemeinschaftskonto-${fallId}`}
+                checked={gemeinschaftskontoGeprueft && istGemeinschaftskonto}
+                onChange={() => {
+                  setIstGemeinschaftskonto(true);
+                  setGemeinschaftskontoGeprueft(true);
+                }}
+              />{" "}
+              Gemeinschaftskonto
+            </label>
+          </div>
+        </div>
+        <div className="feld">
           <label>Guthaben (EUR)</label>
           <input type="number" step="0.01" value={guthaben} onChange={(e) => setGuthaben(e.target.value)} placeholder="0,00" />
         </div>
@@ -309,7 +402,11 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
         <button className="nav-tabs__btn" onClick={speichern} disabled={speichertErw}>
           {speichertErw ? "Speichert …" : "Speichern"}
         </button>
-        <button className="nav-tabs__btn nav-tabs__btn--primary" onClick={erklaerungErstellen} disabled={erzeugtErklaerung || guthaben === ""}>
+        <button
+          className="nav-tabs__btn nav-tabs__btn--primary"
+          onClick={erklaerungErstellen}
+          disabled={erzeugtErklaerung || guthaben === "" || !unpfaendbarkeit907Geprueft || !gemeinschaftskontoGeprueft}
+        >
           {erzeugtErklaerung ? "Erzeugt …" : "Drittschuldnererklärung erzeugen"}
         </button>
         {erw.erklaerung_text && (

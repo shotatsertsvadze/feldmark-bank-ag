@@ -1,10 +1,14 @@
+// Einziehungs-/Ueberweisungsverfuegung sind Varianten der Pfaendung (gleiche
+// Tabelle, gleiches Routing - siehe PFAENDUNGSBLOCK_TYPEN in mistral.js),
+// lesen sich deshalb hier auch als "Pfändung" statt als eigene Prozesse.
 export const DOKUMENTTYP_LABEL = {
   pfaendungsschreiben: "Pfändung",
+  einziehungsverfuegung: "Pfändung",
+  ueberweisungsverfuegung: "Pfändung",
   auskunftsersuchen: "Auskunft",
-  einziehungsverfuegung: "Einziehung",
-  ueberweisungsverfuegung: "Überweisung",
-  erinnerungsschreiben: "Erinnerung",
-  sonstiges: "Sonstiges",
+  pfaendungserinnerung: "Pfändungserinnerung",
+  auskunftsersuchenerinnerung: "Auskunftserinnerung",
+  sonstiges: "Nicht zugeordnet",
 };
 
 // Bewusst dieselbe Farbsemantik wie ueberall sonst im Projekt (moss=neutral/

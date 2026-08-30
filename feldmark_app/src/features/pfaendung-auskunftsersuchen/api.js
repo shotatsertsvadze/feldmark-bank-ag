@@ -47,7 +47,20 @@ export async function erweiterungLaden(fallId) {
   return (await json(await fetch(`/api/faelle/${fallId}/erweiterung`))).fall;
 }
 
-export async function erweiterungSpeichern(fallId, { istPKonto, freibetragErhoehungEur, guthabenEur, guthabenErfasstVon, pKontoGeprueft }) {
+export async function erweiterungSpeichern(
+  fallId,
+  {
+    istPKonto,
+    freibetragErhoehungEur,
+    guthabenEur,
+    guthabenErfasstVon,
+    pKontoGeprueft,
+    unpfaendbarkeit907Geprueft,
+    unpfaendbarkeit907FestgestelltAm,
+    gemeinschaftskontoGeprueft,
+    istGemeinschaftskonto,
+  }
+) {
   return json(
     await fetch(`/api/faelle/${fallId}/erweiterung`, {
       method: "PUT",
@@ -58,6 +71,10 @@ export async function erweiterungSpeichern(fallId, { istPKonto, freibetragErhoeh
         guthaben_eur: guthabenEur,
         guthaben_erfasst_von: guthabenErfasstVon,
         p_konto_geprueft: pKontoGeprueft,
+        unpfaendbarkeit_907_geprueft: unpfaendbarkeit907Geprueft,
+        unpfaendbarkeit_907_festgestellt_am: unpfaendbarkeit907FestgestelltAm,
+        gemeinschaftskonto_geprueft: gemeinschaftskontoGeprueft,
+        ist_gemeinschaftskonto: istGemeinschaftskonto,
       }),
     })
   );
