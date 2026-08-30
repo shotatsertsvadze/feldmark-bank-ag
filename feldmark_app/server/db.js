@@ -86,17 +86,13 @@ export async function findeFallZuAktenzeichen(aktenzeichen) {
   // an dieser Stelle verfehlen. Faellt der Treffer trotzdem aus, greift
   // weiterhin sicher die Sichtpruefung - hier wird nur die Trefferquote
   // verbessert, nicht die Fehlerrichtung geaendert.
-  const pf = await pool.query(
-    "SELECT fall_id FROM feldmark.pfaendung_faelle WHERE regexp_replace(aktenzeichen, '\\s+', '', 'g') = regexp_replace($1, '\\s+', '', 'g')",
-    [aktenzeichen]
-  );
-  if (pf.rows.length) return { tabelle: "feldmark.pfaendung_faelle", fall_id: pf.rows[0].fall_id };
-
-  const ae = await pool.query(
-    "SELECT fall_id FROM feldmark.auskunftsersuchen_faelle WHERE regexp_replace(aktenzeichen, '\\s+', '', 'g') = regexp_replace($1, '\\s+', '', 'g')",
-    [aktenzeichen]
-  );
-  if (ae.rows.length) return { tabelle: "feldmark.auskunftsersuchen_faelle", fall_id: ae.rows[0].fall_id };
+  for (const tabelle of ["feldmark.pfaendung_faelle", "feldmark.auskunftsersuchen_faelle"]) {
+    const { rows } = await pool.query(
+      `SELECT fall_id FROM ${tabelle} WHERE regexp_replace(aktenzeichen, '\\s+', '', 'g') = regexp_replace($1, '\\s+', '', 'g')`,
+      [aktenzeichen]
+    );
+    if (rows.length) return { tabelle, fall_id: rows[0].fall_id };
+  }
 
   return null;
 }
@@ -340,36 +336,38 @@ export async function listeOffeneFaelle() {
   // genutzt wird, kein Fall ohne Protokoll-Eintrag faellt weg (LEFT statt
   // INNER).
   const pool = getPool();
-  const pfaendung = await pool.query(
-    `SELECT f.fall_id, f.aktenzeichen, f.glaeubiger AS partei_a, f.schuldner AS partei_b,
-            to_char(f.zustelldatum, 'YYYY-MM-DD') AS eingangsdatum, 14 AS antwortfrist_tage, f.zustellkanal,
-            f.status, f.erinnerungen_gesendet, f.dokumenttyp,
-            letztes.ereignis AS letztes_ereignis, letztes.erzeugt_am AS letztes_ereignis_am
-     FROM   feldmark.pfaendung_faelle f
-     LEFT JOIN LATERAL (
-       SELECT ereignis, erzeugt_am
-       FROM   feldmark.pfaendung_protokoll p
-       WHERE  p.fall_id = f.fall_id
-       ORDER  BY p.erzeugt_am DESC
-       LIMIT  1
-     ) letztes ON true
-     WHERE  f.status NOT IN ('Erklaerung versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis')`
-  );
-  const auskunftsersuchen = await pool.query(
-    `SELECT f.fall_id, f.aktenzeichen, f.ausstellende_behoerde AS partei_a, f.betroffene_person_name AS partei_b,
-            to_char(f.eingangsdatum, 'YYYY-MM-DD') AS eingangsdatum, f.antwortfrist_tage, f.zustellkanal,
-            f.status, f.erinnerungen_gesendet, f.vertraulich, 'auskunftsersuchen' AS dokumenttyp,
-            letztes.ereignis AS letztes_ereignis, letztes.erzeugt_am AS letztes_ereignis_am
-     FROM   feldmark.auskunftsersuchen_faelle f
-     LEFT JOIN LATERAL (
-       SELECT ereignis, erzeugt_am
-       FROM   feldmark.auskunftsersuchen_protokoll p
-       WHERE  p.fall_id = f.fall_id
-       ORDER  BY p.erzeugt_am DESC
-       LIMIT  1
-     ) letztes ON true
-     WHERE  f.status NOT IN ('Antwort versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis')`
-  );
+  const [pfaendung, auskunftsersuchen] = await Promise.all([
+    pool.query(
+      `SELECT f.fall_id, f.aktenzeichen, f.glaeubiger AS partei_a, f.schuldner AS partei_b,
+              to_char(f.zustelldatum, 'YYYY-MM-DD') AS eingangsdatum, 14 AS antwortfrist_tage, f.zustellkanal,
+              f.status, f.erinnerungen_gesendet, f.dokumenttyp,
+              letztes.ereignis AS letztes_ereignis, letztes.erzeugt_am AS letztes_ereignis_am
+       FROM   feldmark.pfaendung_faelle f
+       LEFT JOIN LATERAL (
+         SELECT ereignis, erzeugt_am
+         FROM   feldmark.pfaendung_protokoll p
+         WHERE  p.fall_id = f.fall_id
+         ORDER  BY p.erzeugt_am DESC
+         LIMIT  1
+       ) letztes ON true
+       WHERE  f.status NOT IN ('Erklaerung versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis')`
+    ),
+    pool.query(
+      `SELECT f.fall_id, f.aktenzeichen, f.ausstellende_behoerde AS partei_a, f.betroffene_person_name AS partei_b,
+              to_char(f.eingangsdatum, 'YYYY-MM-DD') AS eingangsdatum, f.antwortfrist_tage, f.zustellkanal,
+              f.status, f.erinnerungen_gesendet, f.vertraulich, 'auskunftsersuchen' AS dokumenttyp,
+              letztes.ereignis AS letztes_ereignis, letztes.erzeugt_am AS letztes_ereignis_am
+       FROM   feldmark.auskunftsersuchen_faelle f
+       LEFT JOIN LATERAL (
+         SELECT ereignis, erzeugt_am
+         FROM   feldmark.auskunftsersuchen_protokoll p
+         WHERE  p.fall_id = f.fall_id
+         ORDER  BY p.erzeugt_am DESC
+         LIMIT  1
+       ) letztes ON true
+       WHERE  f.status NOT IN ('Antwort versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis')`
+    ),
+  ]);
   return [...pfaendung.rows, ...auskunftsersuchen.rows].sort((a, b) =>
     a.eingangsdatum < b.eingangsdatum ? -1 : 1
   );

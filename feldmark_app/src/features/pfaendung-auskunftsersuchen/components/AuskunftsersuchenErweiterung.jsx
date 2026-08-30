@@ -8,8 +8,8 @@ import {
   auskunftsersuchenErweiterungSpeichern,
   sperreEntscheiden,
 } from "../api.js";
-
-const datumUhrzeit = (iso) => new Date(iso).toLocaleString("de-DE");
+import { formatiereZeitstempel } from "../fristlogik.js";
+import { useEscapeKey } from "../hooks.js";
 
 export default function AuskunftsersuchenErweiterung({ fallId, onFallGeaendert }) {
   const [erw, setErw] = useState(null);
@@ -55,14 +55,7 @@ export default function AuskunftsersuchenErweiterung({ fallId, onFallGeaendert }
     };
   }, [fallId]);
 
-  useEffect(() => {
-    if (!zeigtModal) return;
-    function aufEscape(e) {
-      if (e.key === "Escape") setZeigtModal(false);
-    }
-    window.addEventListener("keydown", aufEscape);
-    return () => window.removeEventListener("keydown", aufEscape);
-  }, [zeigtModal]);
+  useEscapeKey(zeigtModal, setZeigtModal);
 
   function punktUmschalten(punkt) {
     setAusgewaehltePunkte((vorher) => (vorher.includes(punkt) ? vorher.filter((p) => p !== punkt) : [...vorher, punkt]));
@@ -209,7 +202,7 @@ export default function AuskunftsersuchenErweiterung({ fallId, onFallGeaendert }
 
       {erw.compliance_informiert_am && (
         <p className="hinweis-batch">
-          <strong>Compliance informiert</strong> am {datumUhrzeit(erw.compliance_informiert_am)}.
+          <strong>Compliance informiert</strong> am {formatiereZeitstempel(erw.compliance_informiert_am)}.
         </p>
       )}
 
@@ -258,7 +251,7 @@ export default function AuskunftsersuchenErweiterung({ fallId, onFallGeaendert }
         {erw.sperre_entschieden_am && (
           <p className="hinweis-batch">
             Zuletzt entschieden: <strong>{erw.sperre_rechtsgrundlage_vorhanden ? "Sperre ausgelöst" : "Keine Sperre"}</strong> von{" "}
-            {erw.sperre_entschieden_von} am {datumUhrzeit(erw.sperre_entschieden_am)}
+            {erw.sperre_entschieden_von} am {formatiereZeitstempel(erw.sperre_entschieden_am)}
             {erw.sperre_begruendung ? ` — ${erw.sperre_begruendung}` : ""}.
           </p>
         )}
@@ -345,7 +338,7 @@ export default function AuskunftsersuchenErweiterung({ fallId, onFallGeaendert }
               {istFreigegeben && !istVersendet && (
                 <>
                   <p className="erweiterung__status erweiterung__status--ausstehend">
-                    <strong>Freigegeben</strong> von {erw.antwort_freigegeben_von} am {datumUhrzeit(erw.antwort_freigegeben_am)}.
+                    <strong>Freigegeben</strong> von {erw.antwort_freigegeben_von} am {formatiereZeitstempel(erw.antwort_freigegeben_am)}.
                     Versand noch ausstehend — nach dem tatsächlichen Versand hier bestätigen.
                   </p>
                   <div className="erweiterung__aktionen">
@@ -364,8 +357,8 @@ export default function AuskunftsersuchenErweiterung({ fallId, onFallGeaendert }
 
               {istVersendet && (
                 <p className="erweiterung__status erweiterung__status--abgeschlossen">
-                  <strong>Versendet</strong> von {erw.antwort_versendet_von} am {datumUhrzeit(erw.antwort_versendet_am)}
-                  {" "}(freigegeben von {erw.antwort_freigegeben_von} am {datumUhrzeit(erw.antwort_freigegeben_am)}).
+                  <strong>Versendet</strong> von {erw.antwort_versendet_von} am {formatiereZeitstempel(erw.antwort_versendet_am)}
+                  {" "}(freigegeben von {erw.antwort_freigegeben_von} am {formatiereZeitstempel(erw.antwort_freigegeben_am)}).
                 </p>
               )}
             </div>

@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { protokollLaden } from "../api.js";
 import { EREIGNIS_LABEL } from "../dokumenttypen.js";
-
-const datumUhrzeit = (iso) => new Date(iso).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" });
+import { formatiereDatumUhrzeit } from "../fristlogik.js";
 
 /**
  * Zeigt, was der taegliche n8n-Sweep (und die App selbst) fuer diesen Fall
@@ -52,7 +51,7 @@ export default function Fallverlauf({ fallId, reloadSignal }) {
                 <div className="verlauf__inhalt">
                   <div className="verlauf__kopf">
                     <span className="verlauf__ereignis">{label}</span>
-                    <span className="verlauf__zeit">{datumUhrzeit(e.erzeugt_am)}</span>
+                    <span className="verlauf__zeit">{formatiereDatumUhrzeit(e.erzeugt_am)}</span>
                   </div>
                   {e.empfaenger && <p className="verlauf__detail">an {e.empfaenger}</p>}
                 </div>

@@ -35,3 +35,14 @@ export function formatiereDatum(d) {
   const datum = d instanceof Date ? d : new Date(d);
   return datum.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
+
+// Zwei Formatierungen, weil sie tatsaechlich unterschiedlich aussehen sollen
+// (Listenzeilen kompakt, Modal-/Verlauf-Zeitstempel vollstaendig) - nicht
+// versehentliche Doppelung, siehe jeweilige Verwendungsstellen.
+export function formatiereDatumUhrzeit(iso) {
+  return new Date(iso).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" });
+}
+
+export function formatiereZeitstempel(iso) {
+  return new Date(iso).toLocaleString("de-DE");
+}

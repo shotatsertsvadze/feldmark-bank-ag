@@ -321,6 +321,17 @@ app.post("/api/faelle/:fallId/erklaerung", async (req, res) => {
   }
 });
 
+// Reine Entscheidungslogik der weichen Vier-Augen-Pruefung, geteilt zwischen
+// den beiden /freigeben-Routen unten (Drittschuldnererklaerung und
+// Auskunftsersuchen-Antwort) - nur WER wen fragt unterscheidet sich, die
+// Textvergleichs-/Unbekannt-Regel ist identisch.
+function pruefeVierAugen(vorherigePerson, freigebendePerson) {
+  const vorherigeUnbekannt = !vorherigePerson;
+  const gleichePerson =
+    !vorherigeUnbekannt && vorherigePerson.trim().toLowerCase() === freigebendePerson.trim().toLowerCase();
+  return { brauchtBestaetigung: vorherigeUnbekannt || gleichePerson, vorherigeUnbekannt };
+}
+
 // Weiche Vier-Augen-Pruefung: kein echtes Auth-System vorhanden (siehe
 // KONTEXT.md), daher kein hartes Blockieren moeglich - stattdessen ein
 // expliziter Bestaetigungsschritt, wenn Freigebende:r == Guthaben-
@@ -344,10 +355,10 @@ app.post("/api/faelle/:fallId/erklaerung/freigeben", async (req, res) => {
     const fall = await db.ermittleFallMitErweiterung(req.params.fallId);
     if (!fall) return res.status(404).json({ fehler: "Fall nicht gefunden." });
 
-    const erfasserUnbekannt = !fall.guthaben_erfasst_von;
-    const gleichePerson =
-      !erfasserUnbekannt && fall.guthaben_erfasst_von.trim().toLowerCase() === freigegebenVon.trim().toLowerCase();
-    const brauchtBestaetigung = erfasserUnbekannt || gleichePerson;
+    const { brauchtBestaetigung, vorherigeUnbekannt: erfasserUnbekannt } = pruefeVierAugen(
+      fall.guthaben_erfasst_von,
+      freigegebenVon
+    );
 
     if (brauchtBestaetigung && !vierAugenBestaetigt) {
       return res.status(409).json({
@@ -477,11 +488,10 @@ app.post("/api/faelle/:fallId/antwort/freigeben", async (req, res) => {
     const fall = await db.ermittleAuskunftsersuchenMitErweiterung(req.params.fallId);
     if (!fall) return res.status(404).json({ fehler: "Fall nicht gefunden." });
 
-    const pruefendeUnbekannt = !fall.rechtsgrundlage_geprueft_von;
-    const gleichePerson =
-      !pruefendeUnbekannt &&
-      fall.rechtsgrundlage_geprueft_von.trim().toLowerCase() === freigegebenVon.trim().toLowerCase();
-    const brauchtBestaetigung = pruefendeUnbekannt || gleichePerson;
+    const { brauchtBestaetigung, vorherigeUnbekannt: pruefendeUnbekannt } = pruefeVierAugen(
+      fall.rechtsgrundlage_geprueft_von,
+      freigegebenVon
+    );
 
     if (brauchtBestaetigung && !vierAugenBestaetigt) {
       return res.status(409).json({

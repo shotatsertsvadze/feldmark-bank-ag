@@ -24,11 +24,8 @@ export default function Fristleiste({ eingangsdatum, antwortfristTage, erinnerun
     { tag: antwortfristTage - 1, gesendet: erinnerungenGesendet.includes("eskalation"), label: "Esk" },
   ];
 
-  const zoneKlasse =
-    zone === "ueberfaellig" ? "ueberfaellig" : zone === "kritisch" ? "kritisch" : zone === "faellig" ? "faellig" : "ok";
-
   return (
-    <div className={`fristleiste fall-zeile--${zoneKlasse}`} title={`Frist endet ${formatiereDatum(fristende)}`}>
+    <div className={`fristleiste fall-zeile--${zone}`} title={`Frist endet ${formatiereDatum(fristende)}`}>
       <div className="fristleiste__spur" />
       <div className="fristleiste__gelaufen" style={{ width: pos(Math.max(0, vergangeneTage)) }} />
       {marken.map((m) => (

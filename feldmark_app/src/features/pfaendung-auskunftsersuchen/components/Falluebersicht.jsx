@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { faelleLaden, sichtpruefungLaden } from "../api.js";
-import { berechneFrist, formatiereDatum } from "../fristlogik.js";
-import { DOKUMENTTYP_LABEL, EREIGNIS_LABEL } from "../dokumenttypen.js";
+import { berechneFrist, formatiereDatumUhrzeit } from "../fristlogik.js";
+import { DOKUMENTTYP_LABEL, EREIGNIS_LABEL, PFAENDUNGSBLOCK_TYPEN } from "../dokumenttypen.js";
 import Fristleiste from "./Fristleiste.jsx";
 import Stempel from "./Stempel.jsx";
 import PfaendungErweiterung from "./PfaendungErweiterung.jsx";
@@ -11,15 +11,11 @@ import Fallverlauf from "./Fallverlauf.jsx";
 import Aktivitaetsfeed from "./Aktivitaetsfeed.jsx";
 import SweepStatus from "./SweepStatus.jsx";
 
-const datumUhrzeit = (iso) => new Date(iso).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" });
-
 const FILTER = [
   { id: "alle", label: "Alle" },
   { id: "pfaendungsschreiben", label: "Pfändungsblock" },
   { id: "auskunftsersuchen", label: "Auskunftsersuchen" },
 ];
-
-const PFAENDUNGSBLOCK = ["pfaendungsschreiben", "einziehungsverfuegung", "ueberweisungsverfuegung"];
 
 export default function Falluebersicht({ reloadSignal }) {
   const [faelle, setFaelle] = useState([]);
@@ -56,7 +52,7 @@ export default function Falluebersicht({ reloadSignal }) {
 
   const gefiltert = faelle.filter((f) => {
     if (filter === "alle") return true;
-    if (filter === "pfaendungsschreiben") return PFAENDUNGSBLOCK.includes(f.dokumenttyp);
+    if (filter === "pfaendungsschreiben") return PFAENDUNGSBLOCK_TYPEN.includes(f.dokumenttyp);
     return f.dokumenttyp === filter;
   });
 
@@ -114,7 +110,7 @@ export default function Falluebersicht({ reloadSignal }) {
         ) : (
           <div className="fallliste">
             {gefiltert.map((f) => {
-              const istPfaendungsblock = PFAENDUNGSBLOCK.includes(f.dokumenttyp);
+              const istPfaendungsblock = PFAENDUNGSBLOCK_TYPEN.includes(f.dokumenttyp);
               const istAufgeklappt = aufgeklapptFallId === f.fall_id;
               return (
                 <div key={f.fall_id}>
@@ -148,7 +144,7 @@ export default function Falluebersicht({ reloadSignal }) {
                             aria-hidden="true"
                           />
                           {(EREIGNIS_LABEL[f.letztes_ereignis] || {}).label || f.letztes_ereignis}
-                          {f.letztes_ereignis_am && ` · ${datumUhrzeit(f.letztes_ereignis_am)}`}
+                          {f.letztes_ereignis_am && ` · ${formatiereDatumUhrzeit(f.letztes_ereignis_am)}`}
                         </div>
                       )}
                     </div>

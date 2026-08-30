@@ -125,8 +125,8 @@ export default function Posteingang({ onFaelleGeaendert }) {
           </div>
           <div className="panel__body">
             <div className="ergebnisliste">
-              {ergebnisse.map((e, i) => (
-                <ErgebnisKarte key={e.id} ergebnis={e} animiertesStempel={i < ergebnisse.length} />
+              {ergebnisse.map((e) => (
+                <ErgebnisKarte key={e.id} ergebnis={e} animiertesStempel={true} />
               ))}
             </div>
           </div>

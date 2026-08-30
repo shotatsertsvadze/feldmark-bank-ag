@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { datendiskrepanzLaden, datendiskrepanzReaktivieren } from "../api.js";
-
-const datumUhrzeit = (iso) => new Date(iso).toLocaleString("de-DE");
+import { formatiereZeitstempel } from "../fristlogik.js";
 
 // Rendert nichts, wenn der Fall keinen offenen (oder je abgeschlossenen)
 // Datendiskrepanz-Eintrag hat - betrifft die meisten Faelle. Wird als
@@ -50,11 +49,11 @@ export default function DatendiskrepanzFall({ fallId, onFallGeaendert }) {
     <div className="erweiterung diskrepanz">
       <p className="erweiterung__status erweiterung__status--ausstehend">
         <strong>Datendiskrepanz</strong> — Schuldner konnte nicht zugeordnet werden. Rückfrage an den Gläubiger
-        gesendet am {datumUhrzeit(eintrag.rueckfrage_gesendet_am)}.
-        {eintrag.nachfassung_1_gesendet_am && <> Nachfassung 1 am {datumUhrzeit(eintrag.nachfassung_1_gesendet_am)}.</>}
-        {eintrag.nachfassung_2_gesendet_am && <> Nachfassung 2 am {datumUhrzeit(eintrag.nachfassung_2_gesendet_am)}.</>}
+        gesendet am {formatiereZeitstempel(eintrag.rueckfrage_gesendet_am)}.
+        {eintrag.nachfassung_1_gesendet_am && <> Nachfassung 1 am {formatiereZeitstempel(eintrag.nachfassung_1_gesendet_am)}.</>}
+        {eintrag.nachfassung_2_gesendet_am && <> Nachfassung 2 am {formatiereZeitstempel(eintrag.nachfassung_2_gesendet_am)}.</>}
         {eintrag.fristwahrend_erklaert_am && (
-          <> Fristwahrend erklärt am {datumUhrzeit(eintrag.fristwahrend_erklaert_am)} — siehe Drittschuldnererklärung unten.</>
+          <> Fristwahrend erklärt am {formatiereZeitstempel(eintrag.fristwahrend_erklaert_am)} — siehe Drittschuldnererklärung unten.</>
         )}
       </p>
 
@@ -88,12 +87,12 @@ export default function DatendiskrepanzFall({ fallId, onFallGeaendert }) {
         </div>
       ) : eintrag.geklaert_am ? (
         <p className="erweiterung__status erweiterung__status--abgeschlossen">
-          <strong>Reaktiviert</strong> von {eintrag.geklaert_von} am {datumUhrzeit(eintrag.geklaert_am)} — Schuldner:{" "}
+          <strong>Reaktiviert</strong> von {eintrag.geklaert_von} am {formatiereZeitstempel(eintrag.geklaert_am)} — Schuldner:{" "}
           {eintrag.geklaert_schuldner_name}.
         </p>
       ) : (
         <p className="fehlerbanner">
-          <strong>Geschlossen</strong> am {datumUhrzeit(eintrag.geschlossen_am)}: {eintrag.geschlossen_grund}
+          <strong>Geschlossen</strong> am {formatiereZeitstempel(eintrag.geschlossen_am)}: {eintrag.geschlossen_grund}
         </p>
       )}
     </div>

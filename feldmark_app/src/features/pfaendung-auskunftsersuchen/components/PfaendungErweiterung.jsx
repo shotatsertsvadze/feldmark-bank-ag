@@ -7,6 +7,8 @@ import {
   erweiterungLaden,
   erweiterungSpeichern,
 } from "../api.js";
+import { formatiereZeitstempel } from "../fristlogik.js";
+import { useEscapeKey } from "../hooks.js";
 
 // Muss mit P_KONTO_GRUNDFREIBETRAG_EUR in server/pkonto_drittschuldner.js
 // uebereinstimmen - nur fuer die Live-Vorschau im Formular, die eigentliche
@@ -32,7 +34,6 @@ function berechnePfaendbarenBetragVorschau(guthaben, istPKonto, freibetragErhoeh
 }
 
 const eur = (n) => (n == null ? "—" : n.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €");
-const datumUhrzeit = (iso) => new Date(iso).toLocaleString("de-DE");
 
 function guthabenAlterStunden(guthabenErfasstAm) {
   if (!guthabenErfasstAm) return null;
@@ -95,14 +96,7 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
     };
   }, [fallId]);
 
-  useEffect(() => {
-    if (!zeigtModal) return;
-    function aufEscape(e) {
-      if (e.key === "Escape") setZeigtModal(false);
-    }
-    window.addEventListener("keydown", aufEscape);
-    return () => window.removeEventListener("keydown", aufEscape);
-  }, [zeigtModal]);
+  useEscapeKey(zeigtModal, setZeigtModal);
 
   // Gibt { ok, p_konto_benachrichtigung_ausgeloest } statt eines rohen
   // Booleans zurueck - vorher war "false" doppeldeutig zwischen "Speichern
@@ -394,7 +388,7 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
 
       {erw.p_konto_benachrichtigt_am && (
         <p className="hinweis-batch">
-          <strong>P-Konto-Benachrichtigung ausgelöst</strong> am {new Date(erw.p_konto_benachrichtigt_am).toLocaleString("de-DE")}.
+          <strong>P-Konto-Benachrichtigung ausgelöst</strong> am {formatiereZeitstempel(erw.p_konto_benachrichtigt_am)}.
         </p>
       )}
 
@@ -471,7 +465,7 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
               {istFreigegeben && !istVersendet && (
                 <>
                   <p className="erweiterung__status erweiterung__status--ausstehend">
-                    <strong>Freigegeben</strong> von {erw.erklaerung_freigegeben_von} am {datumUhrzeit(erw.erklaerung_freigegeben_am)}.
+                    <strong>Freigegeben</strong> von {erw.erklaerung_freigegeben_von} am {formatiereZeitstempel(erw.erklaerung_freigegeben_am)}.
                     Versand noch ausstehend — nach dem tatsächlichen Versand hier bestätigen.
                   </p>
                   <div className="erweiterung__aktionen">
@@ -490,8 +484,8 @@ export default function PfaendungErweiterung({ fallId, onFallGeaendert }) {
 
               {istVersendet && (
                 <p className="erweiterung__status erweiterung__status--abgeschlossen">
-                  <strong>Versendet</strong> von {erw.erklaerung_versendet_von} am {datumUhrzeit(erw.erklaerung_versendet_am)}
-                  {" "}(freigegeben von {erw.erklaerung_freigegeben_von} am {datumUhrzeit(erw.erklaerung_freigegeben_am)}).
+                  <strong>Versendet</strong> von {erw.erklaerung_versendet_von} am {formatiereZeitstempel(erw.erklaerung_versendet_am)}
+                  {" "}(freigegeben von {erw.erklaerung_freigegeben_von} am {formatiereZeitstempel(erw.erklaerung_freigegeben_am)}).
                 </p>
               )}
             </div>

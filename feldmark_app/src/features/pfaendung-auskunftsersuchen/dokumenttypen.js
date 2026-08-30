@@ -1,6 +1,12 @@
 // Einziehungs-/Ueberweisungsverfuegung sind Varianten der Pfaendung (gleiche
 // Tabelle, gleiches Routing - siehe PFAENDUNGSBLOCK_TYPEN in mistral.js),
 // lesen sich deshalb hier auch als "Pfändung" statt als eigene Prozesse.
+// Muss inhaltlich mit PFAENDUNGSBLOCK_TYPEN in server/mistral.js
+// uebereinstimmen (getrennte Frontend-/Backend-Bundles, kein gemeinsames
+// Modul moeglich) - hier der eine kanonische Ort auf Frontend-Seite statt
+// einer erneuten lokalen Kopie pro Komponente.
+export const PFAENDUNGSBLOCK_TYPEN = ["pfaendungsschreiben", "einziehungsverfuegung", "ueberweisungsverfuegung"];
+
 export const DOKUMENTTYP_LABEL = {
   pfaendungsschreiben: "Pfändung",
   einziehungsverfuegung: "Pfändung",

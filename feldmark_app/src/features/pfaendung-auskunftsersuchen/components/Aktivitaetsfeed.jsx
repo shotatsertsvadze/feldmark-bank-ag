@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { aktivitaetLaden } from "../api.js";
 import { DOKUMENTTYP_LABEL, EREIGNIS_LABEL } from "../dokumenttypen.js";
-
-const datumUhrzeit = (iso) => new Date(iso).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" });
+import { formatiereDatumUhrzeit } from "../fristlogik.js";
 
 /**
  * Fallübergreifender Aktivitäts-Feed: die letzten Ereignisse aus BEIDEN
@@ -48,7 +47,7 @@ export default function Aktivitaetsfeed({ limit = 10 }) {
                   <div className="verlauf__inhalt">
                     <div className="verlauf__kopf">
                       <span className="verlauf__ereignis">{label}</span>
-                      <span className="verlauf__zeit">{datumUhrzeit(e.erzeugt_am)}</span>
+                      <span className="verlauf__zeit">{formatiereDatumUhrzeit(e.erzeugt_am)}</span>
                     </div>
                     <p className="verlauf__detail">
                       <span className="fall-zeile__id">{e.fall_id}</span>
