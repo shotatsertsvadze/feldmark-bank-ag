@@ -1013,3 +1013,56 @@ unverändert. `.claude/launch.json` für `npm run dev` (Port 5291) angelegt.
 Noch offen: `.env`/`.env.example`-Kommentare und Skript-Namen im Detail
 verweisen teils noch auf den alten Namen "Feldmark-Klassifikations-Server"
 (server/index.js Log-Ausgabe) — kosmetisch, nicht funktionsrelevant.
+
+## Erledigt: Claude-Code-Hooks + Testmatrix-Lücke A10 (HEIC) angegangen + Abschlussbericht (2026-09-02)
+
+Auf Anfrage nach einer Automations-/Hook-Analyse zwei Claude-Code-Hooks
+eingerichtet und live geprüft (`.claude/settings.json`, `.claude/hooks/`):
+PreToolUse blockiert Read/Edit/Write auf `feldmark_app/.env` (DATABASE_URL
+inkl. Passwort, MISTRAL_API_KEY), PostToolUse fuehrt nach Edit/Write an
+`server/<name>.js` automatisch die passende `<name>.test.js` per
+`node --test` aus, falls vorhanden. Committed (`f542ff9`).
+
+Danach die Testmatrix-Lücke **A10 (HEIC-Upload, bislang ❌ ohne jede
+Testspur)** angegangen: `feldmark_app/server/convert.test.js` neu angelegt
+(bisher gar keine Tests fuer `convert.js`). Dabei Root-Cause-Fund: ein
+"echtes HEIC" liess sich in dieser Umgebung nicht synthetisieren —
+`sharp().heif({compression:'av1'})` erzeugt ein **AVIF** (Major-Brand
+"avif"), kein HEIC (Major-Brand "heic"/"mif1", HEVC-codiert); `heic-decode`
+prueft genau diese Brand-Bytes und lehnt das AVIF zu Recht als
+"input buffer is not a HEIC image" ab. `compression:'hevc'` schlaegt im
+lokalen libvips-Build mit "Unsupported compression" fehl (HEVC-Encoding ist
+patentbelastet, selten mitgebaut). Ergebnis: MIME-Dispatch, PDF-/PNG-/JPEG-
+Passthrough, generische Bildkonvertierung (WEBP→PNG) und der Fehlerfall
+sind jetzt echt getestet (5 neue gruene Tests); die zwei Tests fuer den
+eigentlichen HEIC-Decode-Pfad sind vorbereitet, aber mit klarem Grund
+uebersprungen (`skip`), bis eine echte HEIC-Datei unter
+`muster_dateien/heic-testbild.heic` liegt (z. B. ein unbearbeitetes
+iPhone-Foto) — bewusst kein Fake-Fixture, das den Test nur "gruen luegt".
+`docs/testmatrix.md` A10 entsprechend von ❌ auf ⚠️ aktualisiert (Zeile +
+"Offene Lücken"-Absatz); Zählung der Gesamtmatrix neu verifiziert: 46
+Zeilen, 39 ✅, 7 ⚠️, 0 ❌.
+
+Anschliessend `docs/abschlussbericht.md` neu geschrieben (Bauplan PH-09,
+"kurzer Abschlussbericht: automatisiert / entfaellt / bleibt beim
+Menschen") — fasst README "Kernfunktionen"/"Bewusste Grenzen",
+`docs/HITL-GRENZEN.md` und `docs/testmatrix.md` zusammen statt sie zu
+duplizieren, mit den oben verifizierten Zahlen.
+
+**Noch offen für die Präsentation** (unverändert seit README/CLAUDE.md):
+echter Versandkanal und Self-Service-Statuslink sind bewusst nicht gebaut,
+Entscheidung ob das vor Abgabe noch umgesetzt oder als bewusste Grenze
+präsentiert wird steht noch aus. Ausserdem im Arbeitsverzeichnis unabhängig
+davon offene, noch nicht committete UI-Politur (Dokumenttyp-Badge-Farben in
+`Falluebersicht.jsx`/`dokumenttypen.js`/`index.css`) sowie ein vermutlich
+versehentlicher Tippfehler in `klassifikations_schema.md` (Zeile 2, ein
+alleinstehendes "2") — dem Nutzer gemeldet, nicht selbststaendig
+korrigiert, da nicht Teil dieser Aufgabe.
+
+## Offene Fragen / bekannte Probleme
+
+- **HEIC-Dekodierung**: Code-Pfad implementiert und End-to-End verdrahtet
+  (`Dropzone.jsx`-Accept-Liste → `istUnterstuetzterTyp()`/
+  `normalisiereFuerOcr()` in `server/convert.js` → `heic-convert`), aber
+  innerhalb dieses Projekts nie mit einer echten HEIC-Datei verifiziert.
+  Details/Testnachweis: `docs/testmatrix.md` A10.

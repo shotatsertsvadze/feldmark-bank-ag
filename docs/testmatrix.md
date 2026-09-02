@@ -31,7 +31,7 @@ Stand: 2026-08-27. Bei neuen Tests: Zeile ergänzen/aktualisieren statt eine zwe
 | A7 | Erinnerungsschreiben, Aktenzeichen NICHT auffindbar | Sichtprüfung | ✅ | Seed-Fall `erinnerung_unbekannt.pdf`, live in Sichtprüfungs-Warteschlange |
 | A8 | Doppeltes Aktenzeichen | Kein zweiter Fall, Duplikat-Verdacht gemeldet | ✅ | Seed-Fall `Auskunftsersuchen_StA_fiktiv.pdf` gegen AE-2026-0118 |
 | A9 | OCR-Text > 12.000 Zeichen | Kürzungs-Flag erzwingt Sichtprüfung (auch für Auskunftsersuchen) | ⚠️ | Code-Pfad vorhanden, kein echtes Langdokument zum Live-Trigger verwendet |
-| A10 | HEIC/HEIF-Upload (Handyscan) | Erfolgreiche Konvertierung vor OCR | ❌ | Kein dokumentierter Testlauf mit echter HEIC-Datei gefunden |
+| A10 | HEIC/HEIF-Upload (Handyscan) | Erfolgreiche Konvertierung vor OCR | ⚠️ | `server/convert.test.js` (neu, 2026-09-02): MIME-Erkennung, PDF-/PNG-/JPEG-Passthrough, generische Bildkonvertierung (WEBP→PNG) und Fehlerfall live getestet. Der eigentliche HEIC-Decode-Pfad (`heic-convert`) bleibt offen — ein echtes HEIC lässt sich nicht synthetisieren (sharp erzeugt mit `compression:'av1'` ein AVIF statt HEIC, `compression:'hevc'` schlägt im lokalen libvips-Build fehl); Test ist vorbereitet und übersprungen, bis eine echte HEIC-Datei unter `muster_dateien/heic-testbild.heic` liegt |
 
 ## B. Pfändungsblock — P-Konto & Drittschuldnererklärung
 
@@ -121,7 +121,11 @@ Primär-/Sekundär-Button-Stile) wurde end-to-end geprüft, dass keine Funktions
 
 ## Offene Lücken auf einen Blick
 
-Aus A–F: A5, A9, A10, C4, D4, D5, E9 sind entweder nur indirekt (⚠️) oder gar nicht (❌)
-verifiziert. Von diesen ist **A10 (HEIC-Konvertierung)** die einzige echte ❌-Lücke ohne jede
-Testspur — alle anderen wurden zumindest einmal durch Code-Konstruktion abgeleitet oder sind aus
-technischen Gründen (E9) nicht isoliert auslösbar.
+Aus A–F: A5, A9, A10, C4, D4, D5, E9 sind bislang nur indirekt (⚠️) verifiziert — keine
+verbleibende ❌-Lücke ohne jede Testspur. A10 (HEIC-Konvertierung) hatte diesen Status bis
+2026-09-02; jetzt ist die Dispatch-/Fehlerlogik echt getestet, nur der binäre HEIC-Decode-Pfad
+selbst wartet noch auf eine echte HEIC-Datei als Fixture (`muster_dateien/heic-testbild.heic`,
+z. B. ein unbearbeitetes iPhone-Foto — dann `node --test server/convert.test.js` erneut laufen
+lassen, die zwei übersprungenen Tests greifen automatisch). Die übrigen wurden zumindest einmal
+durch Code-Konstruktion abgeleitet oder sind aus technischen Gründen (E9) nicht isoliert
+auslösbar.
