@@ -718,6 +718,14 @@ p.view-lede {
   background: var(--slate-bg);
   color: var(--slate);
 }
+.badge--brass {
+  background: var(--brass-tint);
+  color: var(--brass-deep);
+}
+.badge--ink {
+  background: var(--line-soft);
+  color: var(--ink-soft);
+}
 
 /* ------------------------------------------------------------------ KPIs */
 
@@ -756,6 +764,16 @@ p.view-lede {
   background: var(--oxblood);
 }
 
+/* Fluechtige Tonwaesche statt reiner Randstreifen, sobald eine Kachel
+   wirklich Aufmerksamkeit verlangt - liest sich wie eine Randnotiz im
+   Kontobuch, nicht wie ein Warn-Toast. */
+.kpi-tile--warn {
+  background: linear-gradient(100deg, var(--ochre-bg), var(--surface) 55%);
+}
+.kpi-tile--kritisch {
+  background: linear-gradient(100deg, var(--oxblood-bg), var(--surface) 55%);
+}
+
 .kpi-tile__wert {
   font-family: var(--font-display);
   font-size: 34px;
@@ -787,6 +805,9 @@ p.view-lede {
 
 .filter-tabs__btn {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   border: 1.5px solid var(--line);
   background: var(--surface);
   padding: 7px 14px;
@@ -796,6 +817,28 @@ p.view-lede {
   cursor: pointer;
   color: var(--ink-soft);
   transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+/* Derselbe Farbcode wie die Dokumenttyp-Badges in der Fallliste
+   (DOKUMENTTYP_FARBE) - ein Filter fuer "Pfändungsblock" soll dieselbe
+   Farbe tragen wie die Zeilen, die er anzeigt. */
+.filter-tabs__punkt {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--filter-farbe, var(--ink-faint));
+}
+
+.filter-tabs__btn--aktiv .filter-tabs__punkt {
+  background: #fff;
+}
+
+.filter-tabs__btn--slate {
+  --filter-farbe: var(--slate);
+}
+.filter-tabs__btn--brass {
+  --filter-farbe: var(--brass);
 }
 
 .filter-tabs__btn:hover {
@@ -969,13 +1012,20 @@ p.view-lede {
   background: var(--surface-sunken);
 }
 
-.fall-zeile:has(.fristleiste.fall-zeile--kritisch),
-.fall-zeile:has(.fristleiste.fall-zeile--ueberfaellig) {
-  box-shadow: inset 3px 0 0 var(--oxblood);
+/* Ledger-Randstreifen fuer JEDE Zeile, nicht nur die dringenden - macht die
+   Fallliste auf einen Blick als Ampel lesbar (moss=ok bis oxblood=ueberfaellig),
+   statt Farbe nur den Ausnahmefaellen vorzubehalten. */
+.fall-zeile:has(.fristleiste.fall-zeile--ok) {
+  box-shadow: inset 3px 0 0 var(--moss);
 }
 
 .fall-zeile:has(.fristleiste.fall-zeile--faellig) {
   box-shadow: inset 3px 0 0 var(--ochre);
+}
+
+.fall-zeile:has(.fristleiste.fall-zeile--kritisch),
+.fall-zeile:has(.fristleiste.fall-zeile--ueberfaellig) {
+  box-shadow: inset 3px 0 0 var(--oxblood);
 }
 
 .fall-zeile__erweiterung {
@@ -1321,12 +1371,11 @@ p.view-lede {
 }
 
 .fall-zeile__typ {
-  font-size: 10.5px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  font-weight: 600;
-  margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 5px;
 }
 
 .fall-zeile__namen {

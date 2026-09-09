@@ -17,6 +17,22 @@ export const DOKUMENTTYP_LABEL = {
   sonstiges: "Nicht zugeordnet",
 };
 
+// Badge-Farbe pro Dokumenttyp fuer die Fallübersicht - slate fuer den
+// Pfaendungsblock (Justiz-/Vollstreckungston, deckt sich mit dem "in
+// Bearbeitung"-Slate ueberall sonst), brass fuer Auskunftsersuchen (der
+// Siegel-Akzent bekommt hier seine einzige Verwendung als Kategorie-Farbe,
+// statt nur Fokusringe zu markieren). Getrennt von stempelAusErgebnis()s
+// farbe unten, die den Verarbeitungs-AUSGANG faerbt, nicht den Dokumenttyp.
+export const DOKUMENTTYP_FARBE = {
+  pfaendungsschreiben: "slate",
+  einziehungsverfuegung: "slate",
+  ueberweisungsverfuegung: "slate",
+  auskunftsersuchen: "brass",
+  pfaendungserinnerung: "slate",
+  auskunftsersuchenerinnerung: "brass",
+  sonstiges: "ink",
+};
+
 // Bewusst dieselbe Farbsemantik wie ueberall sonst im Projekt (moss=neutral/
 // erledigt, ochre=Achtung, oxblood=kritisch, slate=in Bearbeitung) - keine
 // neue Farbwelt nur fuer Verlauf/Aktivitaetsfeed. Von Fallverlauf.jsx UND

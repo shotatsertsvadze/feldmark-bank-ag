@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { faelleLaden, sichtpruefungLaden } from "../api.js";
 import { berechneFrist, formatiereDatumUhrzeit } from "../fristlogik.js";
-import { DOKUMENTTYP_LABEL, EREIGNIS_LABEL, PFAENDUNGSBLOCK_TYPEN } from "../dokumenttypen.js";
+import { DOKUMENTTYP_LABEL, DOKUMENTTYP_FARBE, EREIGNIS_LABEL, PFAENDUNGSBLOCK_TYPEN } from "../dokumenttypen.js";
 import Fristleiste from "./Fristleiste.jsx";
 import Stempel from "./Stempel.jsx";
 import PfaendungErweiterung from "./PfaendungErweiterung.jsx";
@@ -13,8 +13,8 @@ import SweepStatus from "./SweepStatus.jsx";
 
 const FILTER = [
   { id: "alle", label: "Alle" },
-  { id: "pfaendungsschreiben", label: "Pfändungsblock" },
-  { id: "auskunftsersuchen", label: "Auskunftsersuchen" },
+  { id: "pfaendungsschreiben", label: "Pfändungsblock", farbe: "slate" },
+  { id: "auskunftsersuchen", label: "Auskunftsersuchen", farbe: "brass" },
 ];
 
 export default function Falluebersicht({ reloadSignal }) {
@@ -90,9 +90,10 @@ export default function Falluebersicht({ reloadSignal }) {
             {FILTER.map((f) => (
               <button
                 key={f.id}
-                className={`filter-tabs__btn${filter === f.id ? " filter-tabs__btn--aktiv" : ""}`}
+                className={`filter-tabs__btn${f.farbe ? ` filter-tabs__btn--${f.farbe}` : ""}${filter === f.id ? " filter-tabs__btn--aktiv" : ""}`}
                 onClick={() => setFilter(f.id)}
               >
+                {f.farbe && <span className="filter-tabs__punkt" aria-hidden="true" />}
                 {f.label}
               </button>
             ))}
@@ -130,8 +131,10 @@ export default function Falluebersicht({ reloadSignal }) {
                     <span className="fall-zeile__id">{f.fall_id}</span>
                     <div className="fall-zeile__parteien">
                       <div className="fall-zeile__typ">
-                        {DOKUMENTTYP_LABEL[f.dokumenttyp] || f.dokumenttyp}
-                        {f.vertraulich && <span className="badge badge--oxblood"> Vertraulich</span>}
+                        <span className={`badge badge--${DOKUMENTTYP_FARBE[f.dokumenttyp] || "ink"}`}>
+                          {DOKUMENTTYP_LABEL[f.dokumenttyp] || f.dokumenttyp}
+                        </span>
+                        {f.vertraulich && <span className="badge badge--oxblood">Vertraulich</span>}
                       </div>
                       <div className="fall-zeile__namen">
                         {f.partei_a} → {f.partei_b}
