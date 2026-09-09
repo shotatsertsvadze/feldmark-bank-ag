@@ -51,7 +51,7 @@ Frontend dev server is fixed to port 5291 (hardcoded in `vite.config.js`, proxyi
 
 ## Database connection — read before touching `.env` or `DATABASE_URL`
 
-The committed `.env.example` shows a direct Supabase connection string, but the project actually requires the **Session Pooler** connection string (`aws-0-eu-west-2.pooler.supabase.com:5432`, user `postgres.<project-ref>`), not the direct one (`db.<project-ref>.supabase.co:5432`). This matters because n8n's host only has IPv4 and the direct connection requires IPv6 — using the pooler everywhere keeps the app and n8n on the same connection path. Get the correct URI from Supabase → Project Settings → Database → Connection string → **Session pooler**.
+This project requires the **Session Pooler** connection string (`aws-0-eu-west-2.pooler.supabase.com:5432`, user `postgres.<project-ref>`), not the direct one (`db.<project-ref>.supabase.co:5432`). This matters because n8n's host only has IPv4 and the direct connection requires IPv6 — using the pooler everywhere keeps the app and n8n on the same connection path. Get the correct URI from Supabase → Project Settings → Database → Connection string → **Session pooler**. `.env.example` documents this shape (corrected 2026-09-09; it previously showed the direct string, which cannot work here).
 
 Supabase project: **"shotatsertsvadze's Project"** (`ziwzymarlakoxrgdesvw`), region eu-west-2. All app tables live in a dedicated **`feldmark` schema** (not `public`) — the same Supabase project also hosts unrelated tables from other course projects. Table names inside that schema drop the redundant `feldmark_` prefix (e.g. `feldmark.pfaendung_faelle`, not `feldmark.feldmark_pfaendung_faelle`).
 
@@ -94,12 +94,19 @@ docs/testmatrix.md                  Living, consolidated test matrix (not dated/
                                      reviews) — update in place when new tests are run, don't fork a
                                      second one.
 
-KONTEXT.md                          Running session log for this project — the primary source of "what
+docs/intern/KONTEXT.md              Running session log for this project — the primary source of "what
                                      was built, why, what's still open, and what was decided and rejected."
                                      Check it for project history/context before assuming something is
                                      unbuilt or making an architectural call that may already have been
                                      made and documented. It's large; grep for a topic rather than reading
                                      it end to end.
+
+docs/intern/RALPH-PROGRESS.md       Log of a multi-pass hardening run (backlog items, findings, fixes).
+                                     Both files moved out of the repo root on 2026-09-09 so the root reads
+                                     as a project rather than a worklog; ~76 code comments still refer to
+                                     them by bare filename ("siehe KONTEXT.md", "RALPH-PROGRESS.md Backlog
+                                     #n") — those were deliberately NOT rewritten, since the filenames are
+                                     unchanged and still greppable.
 
 muster_dateien/                     Sample test documents, including deliberate plausibility-trap files
                                      used to verify the classifier doesn't blindly trust doc type/OCR text.
@@ -110,7 +117,7 @@ belegerkennung/                     Local-only reference copy of an unrelated mo
 
 ## Cloud resources
 
-- GitHub (private): `github.com/shotatsertsvadze/feldmark-bank-ag`
+- GitHub (public): `github.com/shotatsertsvadze/feldmark-bank-ag`
 - Supabase project `ziwzymarlakoxrgdesvw` ("shotatsertsvadze's Project"), schema `feldmark`
 - n8n: `https://n8n.skill-sprinters.de`
   - `Ix9jAYFWgh73fPv9` — Pfändung Fristüberwachung sweep (Postgres), daily 07:00
