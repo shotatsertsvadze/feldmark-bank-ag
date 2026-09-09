@@ -120,7 +120,10 @@ cd feldmark_app
 npm install
 cp .env.example .env   # DATABASE_URL (Postgres) + MISTRAL_API_KEY eintragen
 npm run dev             # Backend (Port 4300) + Frontend (Port 5291) parallel
+npm test                # 27 Tests (Vier-Augen-Gates, Fristlogik, Audit-Trail)
 ```
+
+Beim `DATABASE_URL` den **Session-Pooler** aus Supabase nehmen, nicht die direkte Verbindung — die läuft nur über IPv6, der n8n-Host hat aber nur IPv4. Begründung und Format stehen in `.env.example`. Die Tests laufen gegen die echte Datenbank, brauchen also ein gefülltes `.env`.
 
 Die SQL-Dateien im Repo-Root sind additiv und einzeln lauffähig — sie legen Schema, Tabellen und ein paar Testfälle an (`feldmark_pfaendung_schema.sql`, `feldmark_auskunftsersuchen_schema.sql`, `feldmark_sichtpruefung_schema.sql`, sowie die `*_erweiterung_schema.sql`-Dateien für die Bearbeitungs-Bausteine).
 

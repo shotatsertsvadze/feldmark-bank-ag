@@ -42,9 +42,10 @@ npm install
 cp .env.example .env   # fill in DATABASE_URL and MISTRAL_API_KEY — see "Database connection" below
 npm run dev             # backend (port 4300) + frontend (port 5291) concurrently
 npm run build            # vite build (production bundle) — also useful as a quick syntax/type sanity check
+npm test                 # node --test over server/*.test.js (27 tests; 2 skip without a sample HEIC)
 ```
 
-There is no lint or test script/config in this project — don't invent `npm run lint`/`npm test` invocations. Syntax-checking a single server file: `node --check server/index.js`.
+`npm test` hits the real Supabase DB — it needs a working `DATABASE_URL`, and it is not a pure unit suite. There is no lint script — don't invent `npm run lint`. Syntax-checking a single server file: `node --check server/index.js`.
 
 Frontend dev server is fixed to port 5291 (hardcoded in `vite.config.js`, proxying `/api` and `/uploads` to `http://localhost:4300`); backend port comes from `FELDMARK_KLASSIFIKATION_SERVER_PORT` in `.env` (default 4300). Running a second instance against the same ports will conflict — there's no env-driven override for the frontend port, so testing two copies concurrently means editing `vite.config.js`'s proxy target and passing `--port` manually to a second Vite instance.
 
