@@ -8,6 +8,9 @@ dist/
 # Secrets - nie committen
 .env
 .env.local
+# Codex-Gegenstueck zu .claude/: die Hooks sind versioniert, die config.toml
+# enthaelt aber einen persoenlichen API-Token.
+.codex/config.toml
 
 # Uploads (Laufzeitdaten, keine Quelldateien)
 feldmark_app/uploads/*

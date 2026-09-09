@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node '/Users/shotatsertsvadze/Desktop/ALL AI Automation Bootcamp/Digitalisierungsmanager/projekte/Final Project Preperation/.codex/hooks/block-env-access.js'",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node '/Users/shotatsertsvadze/Desktop/ALL AI Automation Bootcamp/Digitalisierungsmanager/projekte/Final Project Preperation/.codex/hooks/run-related-test.js'",
+            "timeout": 30,
+            "statusMessage": "Running related test..."
+          }
+        ]
+      }
+    ]
+  }
+}
