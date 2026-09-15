@@ -34,6 +34,49 @@ function apiKey() {
   return key;
 }
 
+const TIMEOUT_MS = Number(process.env.MISTRAL_TIMEOUT_MS) || 60000;
+// Kurze Pause vor dem Wiederholungsversuch. Ohne sie laeuft der Retry bei
+// einem 429 sofort in dasselbe Rate-Limit - am 2026-09-15 genau so gemessen:
+// zweiter Versuch nach 127ms, wieder 429.
+const RETRY_PAUSE_MS = Number(process.env.MISTRAL_RETRY_PAUSE_MS) || 1500;
+
+/**
+ * fetch mit Timeout und genau einem Wiederholungsversuch. Ohne das haengt
+ * ein Upload unbegrenzt an einem stehenden API-Aufruf, und ein einzelner
+ * 429/5xx kostet das ganze Dokument - bei einem fristgebundenen Schreiben
+ * der teuerste Fehlerfall. Bewusst nur EIN Retry und nur bei Fehlern, die
+ * erfahrungsgemaess transient sind (Timeout, 429, 5xx); ein 400/401 wird
+ * sofort durchgereicht, weil Wiederholen daran nichts aendert.
+ */
+export async function fetchMitTimeout(url, optionen, beschreibung) {
+  for (let versuch = 1; versuch <= 2; versuch++) {
+    const abbruch = new AbortController();
+    const timer = setTimeout(() => abbruch.abort(), TIMEOUT_MS);
+    const start = Date.now();
+    try {
+      const antwort = await fetch(url, { ...optionen, signal: abbruch.signal });
+      if ((antwort.status === 429 || antwort.status >= 500) && versuch === 1) {
+        console.error(`[mistral] ${beschreibung}: HTTP ${antwort.status}, Wiederholung in ${RETRY_PAUSE_MS}ms`);
+        await new Promise((r) => setTimeout(r, RETRY_PAUSE_MS));
+        continue;
+      }
+      console.error(`[mistral] ${beschreibung}: HTTP ${antwort.status} nach ${Date.now() - start}ms`);
+      return antwort;
+    } catch (fehler) {
+      const istTimeout = fehler.name === "AbortError";
+      const grund = istTimeout ? `Timeout nach ${TIMEOUT_MS}ms` : String(fehler.message || fehler);
+      if (versuch === 1) {
+        console.error(`[mistral] ${beschreibung}: ${grund}, Wiederholung in ${RETRY_PAUSE_MS}ms`);
+        await new Promise((r) => setTimeout(r, RETRY_PAUSE_MS));
+        continue;
+      }
+      throw new Error(`${beschreibung} fehlgeschlagen: ${grund}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
 /**
  * Ruft die Mistral OCR API fuer ein einzelnes Dokument auf.
  * Unveraendert uebernommen aus belegerkennung - gleiche API, gleicher Bedarf.
@@ -48,18 +91,22 @@ export async function ocrDokument(bytes, mimeType) {
       ? { type: "document_url", document_url: dataUrl }
       : { type: "image_url", image_url: dataUrl };
 
-  const antwort = await fetch(`${MISTRAL_API_BASE}/ocr`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey()}`,
-      "Content-Type": "application/json",
+  const antwort = await fetchMitTimeout(
+    `${MISTRAL_API_BASE}/ocr`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: OCR_MODEL,
+        document,
+        confidence_scores_granularity: "word",
+      }),
     },
-    body: JSON.stringify({
-      model: OCR_MODEL,
-      document,
-      confidence_scores_granularity: "word",
-    }),
-  });
+    "OCR"
+  );
 
   if (!antwort.ok) {
     const text = await antwort.text().catch(() => "");
@@ -202,22 +249,26 @@ export async function klassifiziereUndExtrahiere(markdown, ocrConfidence = null)
     ? `OCR-Gesamtkonfidenz: ${ocrConfidence.durchschnitt}%, Minimum: ${ocrConfidence.minimum}%\n\n---\n\n`
     : "";
 
-  const antwort = await fetch(`${MISTRAL_API_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey()}`,
-      "Content-Type": "application/json",
+  const antwort = await fetchMitTimeout(
+    `${MISTRAL_API_BASE}/chat/completions`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: EXTRAKTIONS_MODEL,
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: ocrHinweis + markdown.slice(0, MAX_MARKDOWN_ZEICHEN) },
+        ],
+      }),
     },
-    body: JSON.stringify({
-      model: EXTRAKTIONS_MODEL,
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: ocrHinweis + markdown.slice(0, MAX_MARKDOWN_ZEICHEN) },
-      ],
-    }),
-  });
+    "Klassifikation"
+  );
 
   if (!antwort.ok) {
     const text = await antwort.text().catch(() => "");

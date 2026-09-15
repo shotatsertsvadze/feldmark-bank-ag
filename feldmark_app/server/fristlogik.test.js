@@ -4,7 +4,12 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ermittleFristAktion, VORLAUF_ERINNERUNG_2_TAGE, VORLAUF_ESKALATION_TAGE } from "./fristlogik.js";
+import {
+  ermittleFristAktion,
+  bundesweiteFeiertage,
+  VORLAUF_ERINNERUNG_2_TAGE,
+  VORLAUF_ESKALATION_TAGE,
+} from "./fristlogik.js";
 
 const PFAENDUNG_ERLEDIGT = ["Erklaerung versandt", "Abgeschlossen", "Abgeschlossen mit Fristversaeumnis"];
 const AUSKUNFT_ERLEDIGT = ["Antwort versandt", "Abgeschlossen", "Abgeschlossen mit Fristversaeumnis"];
@@ -134,8 +139,9 @@ test(
 );
 
 test("Wochenend-/Feiertagsverschiebung: Fristende auf Feiertag verschiebt sich auf den naechsten Werktag", () => {
-  // 2026-05-01 (Freitag) ist in FEIERTAGE_2026 - Start so waehlen, dass die
-  // rohe 14-Tage-Frist exakt darauf faellt (2026-04-17 + 14 = 2026-05-01).
+  // 2026-05-01 (Freitag, Tag der Arbeit) ist ein berechneter Feiertag - Start
+  // so waehlen, dass die rohe 14-Tage-Frist exakt darauf faellt
+  // (2026-04-17 + 14 = 2026-05-01).
   const r = ermittleFristAktion({
     startdatumIso: "2026-04-17",
     fristTage: 14,
@@ -158,4 +164,39 @@ test("erinnerungen_gesendet als Postgres-Array-String (statt echtem Array) wird 
     heute: heuteIn(14 - VORLAUF_ERINNERUNG_2_TAGE),
   });
   assert.equal(r.aktion, "keine", "String-Array-Parsing haette eskalation erkennen muessen");
+});
+
+test("Feiertage werden berechnet statt gepflegt - 2026 identisch zur frueheren Festliste", () => {
+  assert.deepEqual(bundesweiteFeiertage(2026), [
+    "2026-01-01",
+    "2026-04-03",
+    "2026-04-06",
+    "2026-05-01",
+    "2026-05-14",
+    "2026-05-25",
+    "2026-10-03",
+    "2026-12-25",
+    "2026-12-26",
+  ]);
+});
+
+test("Feiertage gelten auch nach 2026 (Osterformel), Karfreitag 2027 = 26.03.", () => {
+  const f2027 = bundesweiteFeiertage(2027);
+  assert.ok(f2027.includes("2027-03-26"), `Karfreitag fehlt: ${f2027}`);
+  assert.ok(f2027.includes("2027-03-29"), "Ostermontag fehlt");
+  assert.ok(bundesweiteFeiertage(2028).includes("2028-06-05"), "Pfingstmontag 2028 fehlt");
+});
+
+test("Fristende im Jahr 2027 verschiebt sich ueber einen Feiertag hinweg", () => {
+  // Zustellung 12.03.2027 + 14 Tage = 26.03.2027 (Karfreitag) -> naechster
+  // Werktag ist Montag 29.03. ist ebenfalls Feiertag (Ostermontag) -> 30.03.
+  const r = ermittleFristAktion({
+    startdatumIso: "2027-03-12",
+    fristTage: 14,
+    status: "Eingegangen",
+    statusErledigt: PFAENDUNG_ERLEDIGT,
+    erinnerungenGesendet: [],
+    heute: new Date("2027-03-20T00:00:00Z"),
+  });
+  assert.equal(r.fristende, "2027-03-30");
 });

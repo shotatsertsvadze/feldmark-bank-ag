@@ -2,8 +2,11 @@
 
 Kurzer Abschlussbericht gemäß `pfaendungs-bauplan.pdf` PH-09 ("was entfällt /
 was wird automatisiert / was bleibt beim Menschen"). Details und Belege
-liegen in `docs/HITL-GRENZEN.md` (Gate-für-Gate-Verifikation) und
-`docs/testmatrix.md` (Testnachweis) — hier nur die Zusammenfassung.
+liegen in `docs/HITL-GRENZEN.md` (Gate-für-Gate-Verifikation),
+`docs/testmatrix.md` (Testnachweis) und `docs/nutzen.md` (Nutzenrechnung:
+gemessene Durchlaufzeiten, offen deklarierte Aufwandsannahme) — hier nur die
+Zusammenfassung. Der Ausgangsprozess steht in `docs/IST-PROZESS.md`, der
+Zielprozess mit Umsetzungsstand je Schritt in `docs/SOLL-PROZESS.md`.
 
 ## Ausgangslage
 

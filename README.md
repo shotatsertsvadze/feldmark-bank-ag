@@ -131,7 +131,7 @@ Die SQL-Dateien im Repo-Root sind additiv und einzeln lauffähig — sie legen S
 
 Transparenz statt Understatement — das hier ist explizit **nicht** gebaut, mit Begründung:
 
-- **Kein echter Versandkanal.** Beide n8n-Workflows bereiten Empfänger, Betreff und Text vollständig auf, senden aber nicht wirklich — es fehlt der letzte Node.
+- **Kein echter Versandkanal.** Beide n8n-Workflows bereiten Empfänger, Betreff und Text vollständig auf, senden aber nicht wirklich — es fehlt der letzte Node. Im Fall-Verlauf heißen diese Ereignisse deshalb "versandbereit", nicht "gesendet"; die Ereignis-Schlüssel in der Datenbank behalten ihre alten Namen, weil sie auch von n8n geschrieben werden und eine halbe Umbenennung den Audit-Trail spalten würde.
 - **Keine Kernbank-Anbindung.** Kontostände und Guthaben werden manuell erfasst (Annahme A7 im Sollkonzept). In einer echten Umsetzung kämen diese Werte per API.
 - **Kein Auth-/Rollensystem.** Das Vier-Augen-Prinzip ist serverseitig durchgesetzt, aber namensbasiert statt durch echte Logins — bewusst dokumentiert, nicht versteckt.
 - **Konfidenzschwellen sind Startwerte**, kalibriert an vier realen Testdokumenten, nicht an Produktionsvolumen.

@@ -40,13 +40,19 @@ export const DOKUMENTTYP_FARBE = {
 export const EREIGNIS_LABEL = {
   fall_angelegt: { label: "Fall angelegt", farbe: "slate" },
   erinnerung_erhalten: { label: "Erinnerungsschreiben erhalten", farbe: "slate" },
-  erinnerung_1: { label: "Erinnerung 1 gesendet", farbe: "slate" },
-  erinnerung_2: { label: "Erinnerung 2 gesendet", farbe: "ochre" },
-  eskalation: { label: "Eskalation an Vorgesetzte:n", farbe: "oxblood" },
+  // "versandbereit" statt "gesendet": der Versandknoten in beiden n8n-Sweeps
+  // ist ein Platzhalter (NoOp) - Empfaenger, Betreff und Text werden erzeugt
+  // und protokolliert, verschickt wird nichts. Die Ereignis-SCHLUESSEL in der
+  // Datenbank bleiben unveraendert (sie werden auch von n8n geschrieben, eine
+  // halbe Umbenennung wuerde den Audit-Trail spalten) - ehrlich ist hier die
+  // Beschriftung. Siehe README "Bewusste Grenzen".
+  erinnerung_1: { label: "Erinnerung 1 versandbereit", farbe: "slate" },
+  erinnerung_2: { label: "Erinnerung 2 versandbereit", farbe: "ochre" },
+  eskalation: { label: "Eskalation an Vorgesetzte:n versandbereit", farbe: "oxblood" },
   fristversaeumnis: { label: "Fristversäumnis dokumentiert", farbe: "oxblood" },
   vier_augen_erforderlich: { label: "Vier-Augen-Prüfung erforderlich", farbe: "ochre" },
   vier_augen_erklaerung_uebersteuert: { label: "Vier-Augen-Warnung übersteuert", farbe: "oxblood" },
-  datendiskrepanz_rueckfrage_gesendet: { label: "Rückfrage wegen Datendiskrepanz gesendet", farbe: "ochre" },
+  datendiskrepanz_rueckfrage_gesendet: { label: "Rückfrage wegen Datendiskrepanz versandbereit", farbe: "ochre" },
   compliance_informiert: { label: "Compliance informiert", farbe: "slate" },
   vier_augen_antwort_uebersteuert: { label: "Vier-Augen-Warnung übersteuert", farbe: "oxblood" },
   kontosperre_ausgeloest: { label: "Kontosperre-Entscheidung: Sperre ausgelöst", farbe: "oxblood" },
@@ -65,8 +71,9 @@ export const EREIGNIS_LABEL = {
   datendiskrepanz_fristwahrend_erklaert: { label: "Fristwahrende Erklärung abgegeben", farbe: "ochre" },
   datendiskrepanz_geschlossen_ungeklaert: { label: "Datendiskrepanz geschlossen (ungeklärt)", farbe: "oxblood" },
   datendiskrepanz_reaktiviert: { label: "Datendiskrepanz-Fall reaktiviert", farbe: "moss" },
-  datendiskrepanz_nachfassung_1_gesendet: { label: "Nachfassung 1 gesendet (Datendiskrepanz)", farbe: "ochre" },
-  datendiskrepanz_nachfassung_2_gesendet: { label: "Nachfassung 2 gesendet (Datendiskrepanz)", farbe: "ochre" },
+  datendiskrepanz_nachfassung_1_gesendet: { label: "Nachfassung 1 versandbereit (Datendiskrepanz)", farbe: "ochre" },
+  datendiskrepanz_nachfassung_2_gesendet: { label: "Nachfassung 2 versandbereit (Datendiskrepanz)", farbe: "ochre" },
+  aus_sichtpruefung_uebernommen: { label: "Aus Sichtprüfung übernommen (manuell bestätigt)", farbe: "moss" },
 };
 
 /** Stempel-Inhalt aus einem Verarbeitungsergebnis von POST /api/klassifizieren. */

@@ -27,12 +27,13 @@ function getPool() {
   return pool;
 }
 
-// Gleicher Wert wie in der Fristen-Node des n8n-Workflows
-// ("Fristen berechnen (§ 840 ZPO)"): 14 Kalendertage. Fuer Auskunftsersuchen
-// uebernommen, da im Muster ebenfalls 14 Tage (§ 161 StPO-Ersuchen). Nur
-// fuer den Audit-Protokolleintrag bei Fallanlage - die tatsaechliche
-// Fristueberwachung (inkl. Wochenend-/Feiertagsverschiebung) bleibt Aufgabe
-// des n8n-Sweeps, nicht dieses Servers.
+// Fallback-Frist fuer den Pfaendungsblock: 14 Kalendertage (§ 840 ZPO),
+// gleicher Wert wie in der Fristen-Node des n8n-Workflows. Fuer
+// Auskunftsersuchen gilt er NICHT pauschal - dort steht die Frist pro Fall
+// in feldmark.auskunftsersuchen_faelle.antwortfrist_tage und wird in
+// protokolliere() von dort gelesen. Die tatsaechliche Fristueberwachung
+// (inkl. Wochenend-/Feiertagsverschiebung) bleibt Aufgabe des n8n-Sweeps,
+// nicht dieses Servers.
 const FRIST_TAGE = 14;
 
 // Das Extraktionsmodell gibt Datumsangaben wortwoertlich wieder, wie sie im
@@ -63,13 +64,69 @@ function tageBisHeute(datumIso) {
   return Math.round((ziel.getTime() - heute.getTime()) / 86400000);
 }
 
-async function protokolliere(tabelle, fallId, ereignis, eingangsdatumIso) {
-  const fristende = addTage(eingangsdatumIso, FRIST_TAGE);
+const AE_PROTOKOLL_TABELLE = "feldmark.auskunftsersuchen_protokoll";
+
+/**
+ * Schreibt eine Audit-Zeile. fristende/rest_tage muessen dieselbe Frist
+ * abbilden, die der n8n-Sweep und die Fristleiste im UI verwenden - fuer
+ * Auskunftsersuchen ist das die fallindividuelle antwortfrist_tage, nicht
+ * die 14 Tage des Pfaendungsblocks.
+ */
+async function protokolliere(tabelle, fallId, ereignis, eingangsdatumIso, ausfuehrer = null) {
+  const db = ausfuehrer || getPool();
+  const fristTage = tabelle === AE_PROTOKOLL_TABELLE ? await leseAntwortfristTage(fallId, db) : FRIST_TAGE;
+  const fristende = addTage(eingangsdatumIso, fristTage);
   const restTage = tageBisHeute(fristende);
-  await getPool().query(
+  await db.query(
     `INSERT INTO ${tabelle} (fall_id, ereignis, fristende, rest_tage) VALUES ($1, $2, $3, $4)`,
     [fallId, ereignis, fristende, restTage]
   );
+}
+
+/** Frist eines Auskunftsersuchens; 14 Tage nur als Fallback, wenn der Fall
+ *  (noch) nicht gelesen werden kann. */
+async function leseAntwortfristTage(fallId, ausfuehrer = null) {
+  const { rows } = await (ausfuehrer || getPool()).query(
+    `SELECT ae.antwortfrist_tage FROM feldmark.auskunftsersuchen_faelle AS ae WHERE ae.fall_id = $1`,
+    [fallId]
+  );
+  return rows[0]?.antwortfrist_tage ?? FRIST_TAGE;
+}
+
+/**
+ * Fuehrt fn in einer Transaktion aus. Fallanlage besteht aus drei bis fuenf
+ * Statements; ohne Transaktion konnte ein Fehler dazwischen einen Fall ohne
+ * Erweiterungszeile hinterlassen - der faellt wegen des INNER JOIN aus der
+ * Detailansicht, laeuft aber im n8n-Fristsweep weiter mit.
+ */
+async function inTransaktion(fn) {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const ergebnis = await fn(client);
+    await client.query("COMMIT");
+    return ergebnis;
+  } catch (fehler) {
+    await client.query("ROLLBACK");
+    throw fehler;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Geldbetrag aus der Modellantwort in etwas Einfuegbares verwandeln. Das
+ * Modell liefert in der Regel eine Zahl, gelegentlich aber einen String
+ * ("1.234,56 EUR"). Unbrauchbare Werte werden zu null statt den INSERT
+ * scheitern zu lassen - die Hoehe ist fuer die Fallanlage nicht kritisch,
+ * die Drittschuldnererklaerung verlangt sie spaeter ohnehin geprueft
+ * (fail-closed in pkonto_drittschuldner.js).
+ */
+function alsBetrag(wert) {
+  if (wert === null || wert === undefined) return null;
+  if (typeof wert === "number") return Number.isFinite(wert) ? wert : null;
+  const zahl = Number(String(wert).replace(/[^\d,.-]/g, "").replace(/\.(?=\d{3}\b)/g, "").replace(",", "."));
+  return Number.isFinite(zahl) ? zahl : null;
 }
 
 /**
@@ -108,10 +165,10 @@ const SCHULDNER_PLATZHALTER = "(nicht zugeordnet - Rückfrage an Gläubiger läu
  * fehlen, egal wie hoch die Konfidenz war - lieber Sichtpruefung als ein
  * unvollstaendiger Fall.
  *
- * Ausnahme (Sollkonzept 3.1, Ast A "Datendiskrepanz"): fehlt EINZIG
+ * Ausnahme (docs/SOLL-PROZESS.md, Ast A "Datendiskrepanz"): fehlt EINZIG
  * pfaendung.schuldner_name, wird der Fall trotzdem angelegt (mit
  * Platzhalter-Schuldner) und der Datendiskrepanz-Workflow angestossen,
- * statt in die Sichtpruefung zu gehen - das ist der Kern des Sollkonzept-
+ * statt in die Sichtpruefung zu gehen - das ist der Kern des Soll-Prozess-
  * Befunds "die Klaerung darf die Frist nicht blockieren". Fehlen dagegen
  * Aktenzeichen oder Glaeubiger (oder mehr als nur der Schuldnername),
  * bleibt es bei der Sichtpruefung, weil ohne diese beiden Angaben keine
@@ -134,47 +191,54 @@ export async function legePfaendungsfallAn(klassifikation, eingang) {
     return { angelegt: false, grund: `Pflichtfeld(er) fehlen: ${fehlend.join(", ")}` };
   }
 
-  const pool = getPool();
-  const { rows } = await pool.query("SELECT nextval('feldmark.pfaendung_fall_seq') AS n");
+  const { rows } = await getPool().query("SELECT nextval('feldmark.pfaendung_fall_seq') AS n");
   const fallId = `PF-${new Date().getUTCFullYear()}-${String(rows[0].n).padStart(4, "0")}`;
 
-  await pool.query(
-    `INSERT INTO feldmark.pfaendung_faelle
-       (fall_id, aktenzeichen, glaeubiger, schuldner, zustelldatum, zustellkanal,
-        status, bearbeiter_email, vertretung_email, vorgesetzte_email, dokumenttyp)
-     VALUES ($1, $2, $3, $4, $5, $6, 'Eingegangen', $7, $8, $9, $10)`,
-    [
-      fallId,
-      kopf.aktenzeichen,
-      pfaendung.glaeubiger_name,
-      nurSchuldnerFehlt ? SCHULDNER_PLATZHALTER : pfaendung.schuldner_name,
-      eingang.zustelldatum,
-      eingang.zustellkanal,
-      eingang.bearbeiter_email,
-      eingang.vertretung_email ?? null,
-      eingang.vorgesetzte_email ?? null,
-      klassifikation.dokumenttyp,
-    ]
-  );
-  // forderung_gesamt_eur/konfidenz_betrag wurden bisher an dieser Stelle
-  // verworfen - jetzt in der Erweiterungstabelle mitgefuehrt, weil die
-  // P-Konto-Pfaendbarkeitsberechnung und die Drittschuldnererklaerung
-  // beide die Forderungshoehe brauchen (siehe pkonto_drittschuldner.js).
-  await pool.query(
-    `INSERT INTO feldmark.pfaendung_erweiterung (fall_id, forderung_gesamt_eur, konfidenz_betrag)
-     VALUES ($1, $2, $3)`,
-    [fallId, pfaendung.forderung_gesamt_eur ?? null, pfaendung.konfidenz_betrag ?? null]
-  );
-  await protokolliere("feldmark.pfaendung_protokoll", fallId, "fall_angelegt", eingang.zustelldatum);
+  await inTransaktion(async (client) => {
+    await client.query(
+      `INSERT INTO feldmark.pfaendung_faelle
+         (fall_id, aktenzeichen, glaeubiger, schuldner, zustelldatum, zustellkanal,
+          status, bearbeiter_email, vertretung_email, vorgesetzte_email, dokumenttyp)
+       VALUES ($1, $2, $3, $4, $5, $6, 'Eingegangen', $7, $8, $9, $10)`,
+      [
+        fallId,
+        kopf.aktenzeichen,
+        pfaendung.glaeubiger_name,
+        nurSchuldnerFehlt ? SCHULDNER_PLATZHALTER : pfaendung.schuldner_name,
+        eingang.zustelldatum,
+        eingang.zustellkanal,
+        eingang.bearbeiter_email,
+        eingang.vertretung_email ?? null,
+        eingang.vorgesetzte_email ?? null,
+        klassifikation.dokumenttyp,
+      ]
+    );
+    // forderung_gesamt_eur/konfidenz_betrag wurden bisher an dieser Stelle
+    // verworfen - jetzt in der Erweiterungstabelle mitgefuehrt, weil die
+    // P-Konto-Pfaendbarkeitsberechnung und die Drittschuldnererklaerung
+    // beide die Forderungshoehe brauchen (siehe pkonto_drittschuldner.js).
+    await client.query(
+      `INSERT INTO feldmark.pfaendung_erweiterung (fall_id, forderung_gesamt_eur, konfidenz_betrag)
+       VALUES ($1, $2, $3)`,
+      [fallId, alsBetrag(pfaendung.forderung_gesamt_eur), alsBetrag(pfaendung.konfidenz_betrag)]
+    );
+    await protokolliere("feldmark.pfaendung_protokoll", fallId, "fall_angelegt", eingang.zustelldatum, client);
 
-  if (nurSchuldnerFehlt) {
-    const rueckfrageText = erzeugeRueckfrage({ aktenzeichen: kopf.aktenzeichen, fall_id: fallId });
-    await pool.query(`INSERT INTO feldmark.pfaendung_datendiskrepanz (fall_id, rueckfrage_text) VALUES ($1, $2)`, [
-      fallId,
-      rueckfrageText,
-    ]);
-    await protokolliere("feldmark.pfaendung_protokoll", fallId, "datendiskrepanz_rueckfrage_gesendet", eingang.zustelldatum);
-  }
+    if (nurSchuldnerFehlt) {
+      const rueckfrageText = erzeugeRueckfrage({ aktenzeichen: kopf.aktenzeichen, fall_id: fallId });
+      await client.query(`INSERT INTO feldmark.pfaendung_datendiskrepanz (fall_id, rueckfrage_text) VALUES ($1, $2)`, [
+        fallId,
+        rueckfrageText,
+      ]);
+      await protokolliere(
+        "feldmark.pfaendung_protokoll",
+        fallId,
+        "datendiskrepanz_rueckfrage_gesendet",
+        eingang.zustelldatum,
+        client
+      );
+    }
+  });
 
   return { angelegt: true, fall_id: fallId, tabelle: "feldmark.pfaendung_faelle", datendiskrepanz: nurSchuldnerFehlt };
 }
@@ -198,48 +262,55 @@ export async function legeAuskunftsersuchenFallAn(klassifikation, eingang) {
     return { angelegt: false, grund: `Pflichtfeld(er) fehlen: ${fehlend.join(", ")}` };
   }
 
-  const pool = getPool();
-  const { rows } = await pool.query("SELECT nextval('feldmark.auskunftsersuchen_fall_seq') AS n");
+  const { rows } = await getPool().query("SELECT nextval('feldmark.auskunftsersuchen_fall_seq') AS n");
   const fallId = `AE-${new Date().getUTCFullYear()}-${String(rows[0].n).padStart(4, "0")}`;
 
-  await pool.query(
-    `INSERT INTO feldmark.auskunftsersuchen_faelle
-       (fall_id, aktenzeichen, ausstellende_behoerde, betroffene_person_name,
-        betroffene_person_geburtsdatum, tatvorwurf, angefragte_punkte, vertraulich,
-        eingangsdatum, antwortfrist_tage, zustellkanal, status,
-        bearbeiter_email, vertretung_email, vorgesetzte_email)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'Eingegangen',$12,$13,$14)`,
-    [
+  await inTransaktion(async (client) => {
+    await client.query(
+      `INSERT INTO feldmark.auskunftsersuchen_faelle
+         (fall_id, aktenzeichen, ausstellende_behoerde, betroffene_person_name,
+          betroffene_person_geburtsdatum, tatvorwurf, angefragte_punkte, vertraulich,
+          eingangsdatum, antwortfrist_tage, zustellkanal, status,
+          bearbeiter_email, vertretung_email, vorgesetzte_email)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'Eingegangen',$12,$13,$14)`,
+      [
+        fallId,
+        kopf.aktenzeichen,
+        kopf.ausstellende_stelle,
+        ae.betroffene_person_name,
+        normalisiereDeutschesDatum(ae.betroffene_person_geburtsdatum),
+        ae.tatvorwurf || null,
+        ae.angefragte_punkte || [],
+        ae.vertraulich ?? false,
+        eingang.zustelldatum,
+        ae.antwortfrist_tage,
+        eingang.zustellkanal,
+        eingang.bearbeiter_email,
+        eingang.vertretung_email ?? null,
+        eingang.vorgesetzte_email ?? null,
+      ]
+    );
+    // kopf.rechtsgrundlage wurde bisher an dieser Stelle verworfen - jetzt in
+    // der Erweiterungstabelle mitgefuehrt, weil die Antwort sie zitieren muss
+    // (siehe auskunftsersuchen_antwort.js). compliance_informiert_am wird
+    // sofort gesetzt (E2 "automatisiert, sofort" - Soll-Prozess Ast E), nicht
+    // erst bei einer spaeteren Mitarbeiteraktion wie bei der P-Konto-
+    // Benachrichtigung, wo das erst beim Erfassen des Guthabens ausgeloest
+    // wird - hier gibt es keine vergleichbare Ambiguitaet zu vermeiden.
+    await client.query(
+      `INSERT INTO feldmark.auskunftsersuchen_erweiterung (fall_id, rechtsgrundlage, compliance_informiert_am)
+       VALUES ($1, $2, now())`,
+      [fallId, kopf.rechtsgrundlage || []]
+    );
+    await protokolliere("feldmark.auskunftsersuchen_protokoll", fallId, "fall_angelegt", eingang.zustelldatum, client);
+    await protokolliere(
+      "feldmark.auskunftsersuchen_protokoll",
       fallId,
-      kopf.aktenzeichen,
-      kopf.ausstellende_stelle,
-      ae.betroffene_person_name,
-      normalisiereDeutschesDatum(ae.betroffene_person_geburtsdatum),
-      ae.tatvorwurf || null,
-      ae.angefragte_punkte || [],
-      ae.vertraulich ?? false,
+      "compliance_informiert",
       eingang.zustelldatum,
-      ae.antwortfrist_tage,
-      eingang.zustellkanal,
-      eingang.bearbeiter_email,
-      eingang.vertretung_email ?? null,
-      eingang.vorgesetzte_email ?? null,
-    ]
-  );
-  // kopf.rechtsgrundlage wurde bisher an dieser Stelle verworfen - jetzt in
-  // der Erweiterungstabelle mitgefuehrt, weil die Antwort sie zitieren muss
-  // (siehe auskunftsersuchen_antwort.js). compliance_informiert_am wird
-  // sofort gesetzt (E2 "automatisiert, sofort" - Sollkonzept 3.5), nicht
-  // erst bei einer spaeteren Mitarbeiteraktion wie bei der P-Konto-
-  // Benachrichtigung, wo das erst beim Erfassen des Guthabens ausgeloest
-  // wird - hier gibt es keine vergleichbare Ambiguitaet zu vermeiden.
-  await pool.query(
-    `INSERT INTO feldmark.auskunftsersuchen_erweiterung (fall_id, rechtsgrundlage, compliance_informiert_am)
-     VALUES ($1, $2, now())`,
-    [fallId, kopf.rechtsgrundlage || []]
-  );
-  await protokolliere("feldmark.auskunftsersuchen_protokoll", fallId, "fall_angelegt", eingang.zustelldatum);
-  await protokolliere("feldmark.auskunftsersuchen_protokoll", fallId, "compliance_informiert", eingang.zustelldatum);
+      client
+    );
+  });
 
   return { angelegt: true, fall_id: fallId, tabelle: "feldmark.auskunftsersuchen_faelle" };
 }
@@ -347,7 +418,10 @@ export async function listeOffeneFaelle() {
          SELECT ereignis, erzeugt_am
          FROM   feldmark.pfaendung_protokoll p
          WHERE  p.fall_id = f.fall_id
-         ORDER  BY p.erzeugt_am DESC
+         -- id als Tiebreak: seit der Fallanlage in EINER Transaktion teilen
+         -- sich mehrere Zeilen denselben now()-Zeitstempel, die Reihenfolge
+         -- waere sonst nicht bestimmt (bigserial ist monoton).
+         ORDER  BY p.erzeugt_am DESC, p.id DESC
          LIMIT  1
        ) letztes ON true
        WHERE  f.status NOT IN ('Erklaerung versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis')`
@@ -362,7 +436,10 @@ export async function listeOffeneFaelle() {
          SELECT ereignis, erzeugt_am
          FROM   feldmark.auskunftsersuchen_protokoll p
          WHERE  p.fall_id = f.fall_id
-         ORDER  BY p.erzeugt_am DESC
+         -- id als Tiebreak: seit der Fallanlage in EINER Transaktion teilen
+         -- sich mehrere Zeilen denselben now()-Zeitstempel, die Reihenfolge
+         -- waere sonst nicht bestimmt (bigserial ist monoton).
+         ORDER  BY p.erzeugt_am DESC, p.id DESC
          LIMIT  1
        ) letztes ON true
        WHERE  f.status NOT IN ('Antwort versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis')`
@@ -377,13 +454,83 @@ export async function listeOffeneFaelle() {
 export async function listeSichtpruefung() {
   const { rows } = await getPool().query(
     `SELECT id, dateiname, dokumenttyp, einordnung, konfidenz_typ, plausibilitaet_ok,
-            plausibilitaet_begruendung, routing_gruende,
-            to_char(eingangsdatum, 'YYYY-MM-DD') AS eingangsdatum, erzeugt_am
+            plausibilitaet_begruendung, routing_gruende, klassifikation, rohtext_auszug,
+            ansicht_url, to_char(eingangsdatum, 'YYYY-MM-DD') AS eingangsdatum, erzeugt_am
      FROM   feldmark.sichtpruefung_warteschlange
      WHERE  status = 'offen'
      ORDER  BY erzeugt_am`
   );
   return rows;
+}
+
+/**
+ * Dead-Letter-Pfad: OCR oder Klassifikation sind hart gescheitert (API-
+ * Fehler, Timeout, unlesbare Datei). Vorher blieb das Schreiben in so einem
+ * Fall nur als Datei im uploads-Ordner liegen - in keiner Tabelle, in keiner
+ * Liste, nach dem Schliessen des Browser-Tabs unsichtbar, obwohl die
+ * gesetzliche Frist laeuft. Jetzt landet es in derselben Warteschlange wie
+ * jeder andere unsichere Fall und kann dort uebernommen oder verworfen
+ * werden.
+ */
+export async function legeVerarbeitungsfehlerAn({ id, dateiname, fehlertext, ansichtUrl, eingangsdatum }) {
+  await getPool().query(
+    `INSERT INTO feldmark.sichtpruefung_warteschlange
+       (id, dateiname, dokumenttyp, einordnung, plausibilitaet_begruendung,
+        routing_gruende, klassifikation, ansicht_url, eingangsdatum)
+     VALUES ($1, $2, 'sonstiges', 'verarbeitung_fehlgeschlagen', $3, $4, '{}'::jsonb, $5, $6)`,
+    [
+      id,
+      dateiname,
+      `Automatische Verarbeitung fehlgeschlagen: ${fehlertext}`,
+      [`Verarbeitung fehlgeschlagen - manuelle Erfassung noetig`],
+      ansichtUrl,
+      eingangsdatum || null,
+    ]
+  );
+}
+
+/** Einzelner Warteschlangen-Eintrag (auch bereits geprueft), oder null. */
+export async function ermittleSichtpruefungEintrag(id) {
+  const { rows } = await getPool().query(
+    `SELECT s.id, s.dateiname, s.dokumenttyp, s.einordnung, s.klassifikation, s.status,
+            to_char(s.eingangsdatum, 'YYYY-MM-DD') AS eingangsdatum
+     FROM   feldmark.sichtpruefung_warteschlange AS s
+     WHERE  s.id = $1`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+/**
+ * Schliesst einen Warteschlangen-Eintrag ab. Beide Endzustaende stehen seit
+ * jeher im Schema (status CHECK), wurden aber bis 2026-09-15 von keinem
+ * Codepfad geschrieben - die Sichtpruefung war eine Sackgasse.
+ *
+ * Das `status = 'offen'` in der WHERE-Klausel verhindert, dass derselbe
+ * Eintrag zweimal GESCHLOSSEN wird - es verhindert NICHT, dass zwei exakt
+ * gleichzeitige Uebernahmen zwei Faelle anlegen (die Fallanlage laeuft vor
+ * diesem UPDATE, der zweite Aufruf bekommt hier dann false). Bewusst nicht
+ * weiter abgesichert: Einzelplatz-/Demo-Betrieb ohne Login, siehe
+ * docs/HITL-GRENZEN.md.
+ * @returns {boolean} true, wenn der Eintrag durch diesen Aufruf geschlossen wurde.
+ */
+export async function schliesseSichtpruefung(id, { status, geprueftVon, fallId = null, notiz = null }) {
+  const { rowCount } = await getPool().query(
+    `UPDATE feldmark.sichtpruefung_warteschlange
+     SET    status = $2, uebernommen_als_fall_id = $3, geprueft_von = $4,
+            pruef_notiz = $5, geprueft_am = now()
+     WHERE  id = $1 AND status = 'offen'`,
+    [id, status, fallId, geprueftVon, notiz]
+  );
+  return rowCount === 1;
+}
+
+/** Audit-Ereignis am neu entstandenen Fall: er kam aus der Sichtpruefung,
+ *  nicht aus dem automatischen Routing. */
+export async function protokolliereAusSichtpruefungUebernommen(tabelle, fallId, eingangsdatumIso) {
+  const protokollTabelle =
+    tabelle === "feldmark.pfaendung_faelle" ? "feldmark.pfaendung_protokoll" : AE_PROTOKOLL_TABELLE;
+  await protokolliere(protokollTabelle, fallId, "aus_sichtpruefung_uebernommen", eingangsdatumIso);
 }
 
 /**
@@ -642,7 +789,7 @@ export async function lehneErklaerungAb(fallId) {
 }
 
 // ===================================================================
-// Auskunftsersuchen-Erweiterung, Ast E (Sollkonzept 3.5) - Compliance-
+// Auskunftsersuchen-Erweiterung, Ast E (docs/SOLL-PROZESS.md) - Compliance-
 // Einbindung, strukturierte Antwort, bedingte Kontosperre. Siehe
 // feldmark_auskunftsersuchen_erweiterung_schema.sql und
 // auskunftsersuchen_antwort.js. Struktur bewusst 1:1 analog zum
@@ -787,7 +934,7 @@ export async function lehneAntwortAb(fallId) {
 /**
  * E5: dokumentiert die Sperr-Entscheidung. rechtsgrundlageVorhanden=true
  * nur, wenn das Schreiben selbst eine Beschlagnahme/einen Arrest traegt -
- * ein reines Auskunftsersuchen fuehrt zu keiner Sperre (Sollkonzept 2.5).
+ * ein reines Auskunftsersuchen fuehrt zu keiner Sperre (docs/SOLL-PROZESS.md, Ast E).
  * Loest KEINE echte Kontosperre aus (keine Kernbank-Anbindung) - protokolliert
  * nur die getroffene Entscheidung samt Begruendung, in beide Richtungen
  * (auch "keine Sperre" wird protokolliert, damit die Entscheidung
@@ -818,7 +965,7 @@ export async function entscheideSperre(fallId, { rechtsgrundlageVorhanden, begru
 }
 
 // ===================================================================
-// Datendiskrepanz-Workflow (Sollkonzept 3.1, Ast A) - siehe
+// Datendiskrepanz-Workflow (docs/SOLL-PROZESS.md, Ast A) - siehe
 // feldmark.pfaendung_datendiskrepanz_schema.sql und datendiskrepanz.js
 // fuer Begruendung und Textbausteine.
 // ===================================================================
@@ -994,18 +1141,18 @@ export async function holeFaelligeDatendiskrepanzen() {
  */
 export async function holeAktivitaetsfeed(limit = 20) {
   const { rows } = await getPool().query(
-    `(SELECT p.fall_id, p.ereignis, p.erzeugt_am, p.empfaenger,
+    `(SELECT p.fall_id, p.id AS protokoll_id, p.ereignis, p.erzeugt_am, p.empfaenger,
              f.glaeubiger AS partei_a, f.schuldner AS partei_b,
              f.dokumenttyp
       FROM   feldmark.pfaendung_protokoll p
       JOIN   feldmark.pfaendung_faelle f ON f.fall_id = p.fall_id)
      UNION ALL
-     (SELECT p.fall_id, p.ereignis, p.erzeugt_am, p.empfaenger,
+     (SELECT p.fall_id, p.id AS protokoll_id, p.ereignis, p.erzeugt_am, p.empfaenger,
              f.ausstellende_behoerde AS partei_a, f.betroffene_person_name AS partei_b,
              'auskunftsersuchen' AS dokumenttyp
       FROM   feldmark.auskunftsersuchen_protokoll p
       JOIN   feldmark.auskunftsersuchen_faelle f ON f.fall_id = p.fall_id)
-     ORDER BY erzeugt_am DESC
+     ORDER BY erzeugt_am DESC, protokoll_id DESC
      LIMIT $1`,
     [limit]
   );
@@ -1030,7 +1177,9 @@ export async function holeProtokoll(fallId) {
     `SELECT id, ereignis, fristende, rest_tage, empfaenger, prioritaet, erzeugt_am
      FROM   ${tabelle}
      WHERE  fall_id = $1
-     ORDER  BY erzeugt_am DESC`,
+     -- id als Tiebreak, siehe listeOffeneFaelle(): gleichzeitig in einer
+     -- Transaktion geschriebene Zeilen haben denselben Zeitstempel.
+     ORDER  BY erzeugt_am DESC, id DESC`,
     [fallId]
   );
   return rows;

@@ -27,6 +27,11 @@
 
 CREATE SCHEMA IF NOT EXISTS feldmark;
 
+-- ACHTUNG: dieses DROP ist fuer die Erstanlage gedacht. Seit dem
+-- Dead-Letter-Pfad (2026-09-15) enthaelt die Tabelle fristgebundene
+-- Schreiben, die sonst nirgends erfasst sind - auf einer bestehenden
+-- Installation NICHT die ganze Datei ausfuehren, sondern nur die
+-- ALTER-Statements am Dateiende.
 DROP TABLE IF EXISTS feldmark.sichtpruefung_warteschlange;
 
 CREATE TABLE feldmark.sichtpruefung_warteschlange (
@@ -40,8 +45,13 @@ CREATE TABLE feldmark.sichtpruefung_warteschlange (
                                                   'pfaendungserinnerung',
                                                   'auskunftsersuchenerinnerung',
                                                   'sonstiges')),
+    -- 'verarbeitung_fehlgeschlagen' (2026-09-15): OCR oder Klassifikation
+    -- sind hart gescheitert (API-Fehler, Timeout, unlesbare Datei). Das
+    -- Schreiben hat trotzdem eine Frist, darf also nicht nur als Datei im
+    -- uploads-Ordner liegen bleiben - siehe Dead-Letter-Pfad in
+    -- server/index.js verarbeiteDatei().
     einordnung            text        NOT NULL DEFAULT 'niedrige_konfidenz'
-                          CHECK (einordnung IN ('niedrige_konfidenz', 'nicht_zugeordnet')),
+                          CHECK (einordnung IN ('niedrige_konfidenz', 'nicht_zugeordnet', 'verarbeitung_fehlgeschlagen')),
     konfidenz_typ         integer,
     plausibilitaet_ok     boolean,
     plausibilitaet_begruendung text,
@@ -60,11 +70,26 @@ CREATE TABLE feldmark.sichtpruefung_warteschlange (
     -- angelegt hat - stellt die Nachvollziehbarkeit her.
     uebernommen_als_fall_id text,
     geprueft_von          text,
+    -- Freitext-Begruendung der Sichtpruefungs-Entscheidung, vor allem beim
+    -- Verwerfen (warum gehoert das Schreiben in keinen der zwei Prozesse).
+    pruef_notiz           text,
     geprueft_am           timestamptz,
     erzeugt_am            timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_sichtpruefung_status ON feldmark.sichtpruefung_warteschlange (status, erzeugt_am);
+
+-- Nachtraegliche Migrationen fuer eine bereits bestehende Tabelle
+-- (2026-09-15, angewendet auf Supabase):
+--   ALTER TABLE feldmark.sichtpruefung_warteschlange
+--     ADD COLUMN IF NOT EXISTS pruef_notiz text;
+--   ALTER TABLE feldmark.sichtpruefung_warteschlange
+--     DROP CONSTRAINT sichtpruefung_warteschlange_einordnung_check;
+--   ALTER TABLE feldmark.sichtpruefung_warteschlange
+--     ADD CONSTRAINT sichtpruefung_warteschlange_einordnung_check
+--     CHECK (einordnung IN ('niedrige_konfidenz', 'nicht_zugeordnet', 'verarbeitung_fehlgeschlagen'));
+-- Rollback: Spalte droppen bzw. den CHECK ohne den dritten Wert neu setzen
+-- (dann vorher betroffene Zeilen umschluesseln).
 
 COMMENT ON COLUMN feldmark.sichtpruefung_warteschlange.eingangsdatum IS
     'Wie bei den Faelle-Tabellen: kommt aus Scan-/E-Mail-Metadaten, nie aus

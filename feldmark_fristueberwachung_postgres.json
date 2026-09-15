@@ -35,7 +35,10 @@
       "parameters": {
         "operation": "executeQuery",
         "query": "SELECT fall_id,\n       aktenzeichen,\n       glaeubiger,\n       schuldner,\n       to_char(zustelldatum, 'YYYY-MM-DD') AS zustelldatum,\n       zustellkanal,\n       status,\n       erinnerungen_gesendet,\n       bearbeiter_email,\n       vertretung_email,\n       vorgesetzte_email\nFROM   feldmark.pfaendung_faelle\nWHERE  status NOT IN ('Erklaerung versandt',\n                      'Abgeschlossen',\n                      'Abgeschlossen mit Fristversaeumnis')\nORDER  BY zustelldatum;",
-        "options": {}
+        "options": {},
+        "parameters": {
+          "query": "SELECT fall_id,\n       aktenzeichen,\n       glaeubiger,\n       schuldner,\n       to_char(zustelldatum, 'YYYY-MM-DD') AS zustelldatum,\n       zustellkanal,\n       status,\n       erinnerungen_gesendet,\n       bearbeiter_email,\n       vertretung_email,\n       vorgesetzte_email\nFROM   feldmark_pfaendung_faelle\nWHERE  status NOT IN ('Erklaerung versandt',\n                      'Abgeschlossen',\n                      'Abgeschlossen mit Fristversaeumnis')\nORDER  BY zustelldatum;"
+        }
       },
       "id": "9a43793c-304b-4112-a448-7378c0c0fb90",
       "name": "Offene Faelle laden (Postgres)",
@@ -49,7 +52,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\n// =====================================================================\n//  Fristberechnung § 840 ZPO  +  Ermittlung des Handlungsbedarfs\n//\n//  Identisch zur Mock-Variante aus Phase 3 — die Regel haengt nicht an\n//  der Datenquelle. Das ist der Punkt: Datenzugriff und Fachlogik sind\n//  getrennt, deshalb war der Wechsel Mock -> Postgres ein Node-Tausch.\n//\n//  Regeln:\n//   - Frist = Zustelldatum + 14 KALENDERtage (nicht Arbeitstage).\n//   - Faellt das Fristende auf Samstag, Sonntag oder Feiertag, verschiebt\n//     es sich auf den naechsten Werktag (§ 222 Abs. 2 ZPO i.V.m. § 193 BGB).\n//   - Erinnerung 1 am Tag des Fristbeginns.\n//   - Erinnerung 2 drei Kalendertage vor Fristende.\n//   - Eskalation an Vorgesetzte + Vertretung einen Tag vor Fristende.\n//   - Bereits gesendete Erinnerungen werden nicht wiederholt (Idempotenz).\n//   - Ist bereits eskaliert, wird keine niedrigerprioritaere Erinnerung\n//     (erinnerung_2/erinnerung_1) mehr nachgereicht (kein Signal-Downgrade).\n// =====================================================================\n\nconst FRIST_TAGE = 14;\nconst VORLAUF_ERINNERUNG_2 = 3;\nconst VORLAUF_ESKALATION = 1;\nconst STATUS_ERLEDIGT = ['Erklaerung versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis'];\n\n// Feiertage bitte pflegen — hier beispielhaft die bundeseinheitlichen 2026.\nconst FEIERTAGE = [\n  '2026-01-01', '2026-04-03', '2026-04-06', '2026-05-01',\n  '2026-05-14', '2026-05-25', '2026-10-03', '2026-12-25', '2026-12-26',\n];\n\nfunction toDate(s) { return new Date(String(s).slice(0, 10) + 'T00:00:00Z'); }\nfunction iso(d) { return d.toISOString().slice(0, 10); }\nfunction addDays(d, n) { const x = new Date(d); x.setUTCDate(x.getUTCDate() + n); return x; }\nfunction istWerktag(d) {\n  const wd = d.getUTCDay();\n  return wd !== 0 && wd !== 6 && !FEIERTAGE.includes(iso(d));\n}\nfunction naechsterWerktag(d) { let x = new Date(d); while (!istWerktag(x)) x = addDays(x, 1); return x; }\nfunction tageDiff(a, b) { return Math.round((a.getTime() - b.getTime()) / 86400000); }\n\nconst heute = new Date();\nheute.setUTCHours(0, 0, 0, 0);\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  const f = item.json;\n\n  const zustellung = toDate(f.zustelldatum);\n  const fristRoh = addDays(zustellung, FRIST_TAGE);\n  const frist = naechsterWerktag(fristRoh);\n  const restTage = tageDiff(frist, heute);\n\n  // Postgres liefert text[] als Array; leeres Array kommt je nach Treiber\n  // auch als null oder als String '{}' an — deshalb defensiv normalisieren.\n  let gesendet = f.erinnerungen_gesendet;\n  if (typeof gesendet === 'string') {\n    gesendet = gesendet.replace(/[{}\"]/g, '').split(',').filter(Boolean);\n  }\n  if (!Array.isArray(gesendet)) gesendet = [];\n\n  const erledigt = STATUS_ERLEDIGT.includes(f.status);\n\n  let aktion = 'keine';\n  let begruendung = '';\n\n  if (erledigt) {\n    aktion = 'keine';\n    begruendung = 'Erklaerung bereits versandt — Fristueberwachung fuer diesen Fall beendet.';\n  } else if (restTage < 0) {\n    if (!gesendet.includes('fristversaeumnis')) {\n      aktion = 'fristversaeumnis';\n      begruendung = `Frist am ${iso(frist)} abgelaufen, Erklaerung nicht versandt.`;\n    } else {\n      aktion = 'keine';\n      begruendung = `Frist am ${iso(frist)} abgelaufen, Fristversaeumnis bereits dokumentiert.`;\n    }\n  } else if (restTage <= VORLAUF_ESKALATION && !gesendet.includes('eskalation')) {\n    aktion = 'eskalation';\n    begruendung = `Noch ${restTage} Tag(e) bis Fristablauf, Erklaerung offen.`;\n  } else if (restTage <= VORLAUF_ERINNERUNG_2 && !gesendet.includes('erinnerung_2') && !gesendet.includes('eskalation')) {\n    aktion = 'erinnerung_2';\n    begruendung = `Noch ${restTage} Tag(e) bis Fristablauf.`;\n  } else if (!gesendet.includes('erinnerung_1') && !gesendet.includes('erinnerung_2') && !gesendet.includes('eskalation')) {\n    aktion = 'erinnerung_1';\n    begruendung = 'Fristbeginn — Fall zur Bearbeitung eingesteuert.';\n  } else {\n    aktion = 'keine';\n    begruendung = `Noch ${restTage} Tag(e) Puffer, faellige Erinnerung bereits versandt.`;\n  }\n\n  out.push({\n    json: {\n      ...f,\n      erinnerungen_gesendet: gesendet,\n      fristende_roh: iso(fristRoh),\n      fristende: iso(frist),\n      fristende_verschoben: iso(frist) !== iso(fristRoh),\n      rest_tage: restTage,\n      heute: iso(heute),\n      aktion,\n      begruendung,\n    },\n  });\n}\n\nreturn out;\n"
+        "jsCode": "\n// =====================================================================\n//  Fristberechnung § 840 ZPO  +  Ermittlung des Handlungsbedarfs\n//\n//  Identisch zur Mock-Variante aus Phase 3 — die Regel haengt nicht an\n//  der Datenquelle. Das ist der Punkt: Datenzugriff und Fachlogik sind\n//  getrennt, deshalb war der Wechsel Mock -> Postgres ein Node-Tausch.\n//\n//  Regeln:\n//   - Frist = Zustelldatum + 14 KALENDERtage (nicht Arbeitstage).\n//   - Faellt das Fristende auf Samstag, Sonntag oder Feiertag, verschiebt\n//     es sich auf den naechsten Werktag (§ 222 Abs. 2 ZPO i.V.m. § 193 BGB).\n//   - Erinnerung 1 am Tag des Fristbeginns.\n//   - Erinnerung 2 drei Kalendertage vor Fristende.\n//   - Eskalation an Vorgesetzte + Vertretung einen Tag vor Fristende.\n//   - Bereits gesendete Erinnerungen werden nicht wiederholt (Idempotenz).\n//   - Ist bereits eskaliert, wird keine niedrigerprioritaere Erinnerung\n//     (erinnerung_2/erinnerung_1) mehr nachgereicht (kein Signal-Downgrade).\n// =====================================================================\n\nconst FRIST_TAGE = 14;\nconst VORLAUF_ERINNERUNG_2 = 3;\nconst VORLAUF_ESKALATION = 1;\nconst STATUS_ERLEDIGT = ['Erklaerung versandt', 'Abgeschlossen', 'Abgeschlossen mit Fristversaeumnis'];\n\n// Feiertage werden berechnet, nicht gepflegt: eine feste 2026-Liste haette ab\n// 1.1.2027 stillschweigend nur noch Wochenenden erkannt, ein Fristende waere\n// dann faelschlich auf einen Feiertag gefallen statt auf den naechsten Werktag.\n// Identisch zur Referenzkopie feldmark_app/server/fristlogik.js.\nfunction ostersonntag(jahr) {\n  const a = jahr % 19, b = Math.floor(jahr / 100), c = jahr % 100;\n  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);\n  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;\n  const i = Math.floor(c / 4), k = c % 4;\n  const l = (32 + 2 * e + 2 * i - h - k) % 7;\n  const m = Math.floor((a + 11 * h + 22 * l) / 451);\n  const monat = Math.floor((h + l - 7 * m + 114) / 31);\n  const tag = ((h + l - 7 * m + 114) % 31) + 1;\n  return new Date(Date.UTC(jahr, monat - 1, tag));\n}\nfunction feiertageFuer(jahr) {\n  const o = ostersonntag(jahr);\n  const rel = (n) => iso(addDays(o, n));\n  return [`${jahr}-01-01`, rel(-2), rel(1), `${jahr}-05-01`, rel(39), rel(50),\n          `${jahr}-10-03`, `${jahr}-12-25`, `${jahr}-12-26`];\n}\nfunction feiertageUm(datum) {\n  const j = datum.getUTCFullYear();\n  return [...feiertageFuer(j), ...feiertageFuer(j + 1)];\n}\n\nfunction toDate(s) { return new Date(String(s).slice(0, 10) + 'T00:00:00Z'); }\nfunction iso(d) { return d.toISOString().slice(0, 10); }\nfunction addDays(d, n) { const x = new Date(d); x.setUTCDate(x.getUTCDate() + n); return x; }\nfunction istWerktag(d, feiertage) {\n  const wd = d.getUTCDay();\n  return wd !== 0 && wd !== 6 && !feiertage.includes(iso(d));\n}\nfunction naechsterWerktag(d) {\n  const feiertage = feiertageUm(d);\n  let x = new Date(d);\n  while (!istWerktag(x, feiertage)) x = addDays(x, 1);\n  return x;\n}\nfunction tageDiff(a, b) { return Math.round((a.getTime() - b.getTime()) / 86400000); }\n\nconst heute = new Date();\nheute.setUTCHours(0, 0, 0, 0);\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  const f = item.json;\n\n  // Leerlauf-Schutz: der Postgres-Loader liefert bei null offenen Faellen mit\n  // alwaysOutputData ein leeres Item. Ohne diesen Zweig wuerde toDate(undefined)\n  // werfen und der Lauf schiene fehlgeschlagen, obwohl schlicht nichts zu tun\n  // war. Das leere Item laeuft als 'keine' bis zum Abschluss-Knoten durch, der\n  // den Sweep-Status schreibt.\n  if (!f.zustelldatum) {\n    out.push({ json: { ...f, aktion: 'keine', begruendung: 'Keine offenen Faelle - nichts zu tun.' } });\n    continue;\n  }\n\n  const zustellung = toDate(f.zustelldatum);\n  const fristRoh = addDays(zustellung, FRIST_TAGE);\n  const frist = naechsterWerktag(fristRoh);\n  const restTage = tageDiff(frist, heute);\n\n  // Postgres liefert text[] als Array; leeres Array kommt je nach Treiber\n  // auch als null oder als String '{}' an — deshalb defensiv normalisieren.\n  let gesendet = f.erinnerungen_gesendet;\n  if (typeof gesendet === 'string') {\n    gesendet = gesendet.replace(/[{}\"]/g, '').split(',').filter(Boolean);\n  }\n  if (!Array.isArray(gesendet)) gesendet = [];\n\n  const erledigt = STATUS_ERLEDIGT.includes(f.status);\n\n  let aktion = 'keine';\n  let begruendung = '';\n\n  if (erledigt) {\n    aktion = 'keine';\n    begruendung = 'Erklaerung bereits versandt — Fristueberwachung fuer diesen Fall beendet.';\n  } else if (restTage < 0) {\n    if (!gesendet.includes('fristversaeumnis')) {\n      aktion = 'fristversaeumnis';\n      begruendung = `Frist am ${iso(frist)} abgelaufen, Erklaerung nicht versandt.`;\n    } else {\n      aktion = 'keine';\n      begruendung = `Frist am ${iso(frist)} abgelaufen, Fristversaeumnis bereits dokumentiert.`;\n    }\n  } else if (restTage <= VORLAUF_ESKALATION && !gesendet.includes('eskalation')) {\n    aktion = 'eskalation';\n    begruendung = `Noch ${restTage} Tag(e) bis Fristablauf, Erklaerung offen.`;\n  } else if (restTage <= VORLAUF_ERINNERUNG_2 && !gesendet.includes('erinnerung_2') && !gesendet.includes('eskalation')) {\n    aktion = 'erinnerung_2';\n    begruendung = `Noch ${restTage} Tag(e) bis Fristablauf.`;\n  } else if (!gesendet.includes('erinnerung_1') && !gesendet.includes('erinnerung_2') && !gesendet.includes('eskalation')) {\n    aktion = 'erinnerung_1';\n    begruendung = 'Fristbeginn — Fall zur Bearbeitung eingesteuert.';\n  } else {\n    aktion = 'keine';\n    begruendung = `Noch ${restTage} Tag(e) Puffer, faellige Erinnerung bereits versandt.`;\n  }\n\n  out.push({\n    json: {\n      ...f,\n      erinnerungen_gesendet: gesendet,\n      fristende_roh: iso(fristRoh),\n      fristende: iso(frist),\n      fristende_verschoben: iso(frist) !== iso(fristRoh),\n      rest_tage: restTage,\n      heute: iso(heute),\n      aktion,\n      begruendung,\n    },\n  });\n}\n\nreturn out;\n"
       },
       "id": "558f8dc6-b793-4bc7-878b-421bd674f49c",
       "name": "Fristen berechnen (§ 840 ZPO)",
@@ -442,6 +445,9 @@
         "options": {
           "queryReplacement": "={{ [ $('Versand (Platzhalter)').item.json.fall_id, $('Versand (Platzhalter)').item.json.aktion, $('Versand (Platzhalter)').item.json.fristende, $('Versand (Platzhalter)').item.json.rest_tage, $('Versand (Platzhalter)').item.json.empfaenger, $('Versand (Platzhalter)').item.json.prioritaet ] }}",
           "queryBatching": "independently"
+        },
+        "parameters": {
+          "query": "INSERT INTO feldmark_pfaendung_protokoll\n       (fall_id, ereignis, fristende, rest_tage, empfaenger, prioritaet)\nVALUES ($1, $2, $3::date, $4::int, $5, $6);"
         }
       },
       "id": "41a36309-c40f-4e98-a9c4-9b39353e6042",
@@ -461,6 +467,9 @@
         "options": {
           "queryReplacement": "={{ $('Versand (Platzhalter)').item.json.erinnerung_marker }}, {{ $('Versand (Platzhalter)').item.json.neuer_status }}, {{ $('Versand (Platzhalter)').item.json.fall_id }}",
           "queryBatching": "independently"
+        },
+        "parameters": {
+          "query": "UPDATE feldmark_pfaendung_faelle\nSET    erinnerungen_gesendet = array_append(erinnerungen_gesendet, $1),\n       status                = $2,\n       letzte_aktion_am      = now()\nWHERE  fall_id = $3\n  AND  NOT ($1 = ANY (erinnerungen_gesendet))\nRETURNING fall_id, status, erinnerungen_gesendet;"
         }
       },
       "id": "a3f06d57-21d2-418c-aa51-4d00d32942b5",
@@ -547,7 +556,7 @@
         -180
       ],
       "parameters": {
-        "content": "### Feiertage bitte jaehrlich pflegen\n\n`FEIERTAGE` im Code-Node rechts enthaelt nur die bundeseinheitlichen 2026-Termine. Ohne jaehrliche Ergaenzung erkennt `istWerktag()` ab 1.1.2027 keine Feiertage mehr (nur noch Wochenenden) - ein Fristende koennte dann faelschlich auf einen Feiertag statt den naechsten Werktag fallen.",
+        "content": "### Feiertage werden berechnet\n\nDer Code-Node rechnet die bundeseinheitlichen Feiertage ueber die Osterformel (`feiertageFuer(jahr)`) aus, statt eine Jahresliste zu pflegen - seit 2026-09-15, vorher galt eine feste 2026-Liste. Laendergesetzliche Feiertage sind bewusst nicht enthalten, sie gelten nicht bundesweit. Referenzkopie mit Tests: feldmark_app/server/fristlogik.js",
         "height": 220,
         "width": 460,
         "color": 3
@@ -581,7 +590,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// =====================================================================\n//  Datendiskrepanz-Sweep: faellige Aktion bestimmen + Text erzeugen\n//\n//  MUSS SYNCHRON GEHALTEN WERDEN mit feldmark_app/server/datendiskrepanz.js\n//  - dieselbe Logik existiert bewusst zweimal (Nutzerentscheidung vom\n//  2026-08-14: Duplizierung statt Deployment, siehe KONTEXT.md und die\n//  Sticky Note links). Aendert sich eine Frist-Schwelle oder ein\n//  Textbaustein dort, muss dieser Code-Node manuell nachgezogen werden.\n// =====================================================================\n\nconst NACHFASSUNG_1_TAGE = 3;\nconst NACHFASSUNG_2_TAGE = 6;\nconst FRISTWAHREND_SPAETESTENS_TAG = 10;\nconst SCHLIESSEN_NACH_TAGEN = 30;\n\nfunction tageSeit(datumWert) {\n  if (!datumWert) return null;\n  return Math.floor((Date.now() - new Date(datumWert).getTime()) / 86400000);\n}\nconst heute = () => new Date().toLocaleDateString('de-DE');\nconst datum = (iso) => new Date(iso).toLocaleDateString('de-DE');\n\nfunction erzeugeNachfassung(f, nummer) {\n  return [\n    `NACHFASSUNG ${nummer} zur Rückfrage vom ${datum(f.rueckfrage_gesendet_am)}`,\n    ``,\n    `Ihr Aktenzeichen: ${f.aktenzeichen}`,\n    `Unser Aktenzeichen: ${f.fall_id}`,\n    ``,\n    `Sehr geehrte Damen und Herren,`,\n    ``,\n    `wir haben Ihnen am ${datum(f.rueckfrage_gesendet_am)} eine Rückfrage zur Identifikation des Schuldners im oben genannten Vorgang übersandt und bislang keine Antwort erhalten.`,\n    ``,\n    `Bitte teilen Sie uns die angefragten Angaben kurzfristig mit.`,\n    ``,\n    `Mit freundlichen Grüßen`,\n    `Feldmark Bank AG`,\n    ``,\n    `— automatisch erzeugt am ${heute()} —`,\n  ].join('\\n');\n}\n\nfunction erzeugeFristwahrendeErklaerung(f) {\n  return [\n    `DRITTSCHULDNERERKLÄRUNG gemäß § 840 ZPO`,\n    ``,\n    `Ihr Aktenzeichen: ${f.aktenzeichen}`,\n    `Unser Aktenzeichen: ${f.fall_id}`,\n    `Zustellung des Schreibens: ${datum(f.zustelldatum)}`,\n    ``,\n    `Sehr geehrte Damen und Herren,`,\n    ``,\n    `zu dem oben genannten Vorgang erklären wir gemäß § 840 Abs. 1 ZPO wie folgt:`,\n    ``,\n    `1. Eine Geschäftsverbindung zu dem in Ihrem Schreiben bezeichneten Schuldner konnte anhand der uns vorliegenden Daten nicht festgestellt werden. Wir haben Sie hierzu am ${datum(f.rueckfrage_gesendet_am)} um ergänzende Angaben gebeten; eine für die Zuordnung ausreichende Antwort liegt bis heute nicht vor.`,\n    `2. Diese Erklärung wahrt die gesetzliche Frist. Sollte die Zuordnung anhand nachträglich eingehender Angaben gelingen, wird der Vorgang unverzüglich erneut geprüft und, falls zutreffend, eine ergänzende Erklärung nach § 840 ZPO abgegeben.`,\n    ``,\n    `Mit freundlichen Grüßen`,\n    `Feldmark Bank AG`,\n    ``,\n    `— automatisch erzeugt am ${heute()}, vor Versand durch Mitarbeiter zu bestätigen —`,\n  ].join('\\n');\n}\n\nconst out = [];\nfor (const item of $input.all()) {\n  const f = item.json;\n  const tageSeitZustellung = tageSeit(f.zustelldatum);\n  const tageSeitRueckfrage = tageSeit(f.rueckfrage_gesendet_am);\n\n  let aktion = 'keine';\n  let text = null;\n\n  if (tageSeitZustellung >= FRISTWAHREND_SPAETESTENS_TAG && !f.fristwahrend_erklaert_am) {\n    aktion = 'fristwahrend_erklaert';\n    text = erzeugeFristwahrendeErklaerung(f);\n  } else if (tageSeitRueckfrage >= SCHLIESSEN_NACH_TAGEN) {\n    aktion = 'geschlossen_ungeklaert';\n  } else if (tageSeitRueckfrage >= NACHFASSUNG_2_TAGE && !f.nachfassung_2_gesendet_am) {\n    aktion = 'nachfassung_2';\n    text = erzeugeNachfassung(f, 2);\n  } else if (tageSeitRueckfrage >= NACHFASSUNG_1_TAGE && !f.nachfassung_1_gesendet_am) {\n    aktion = 'nachfassung_1';\n    text = erzeugeNachfassung(f, 1);\n  }\n\n  out.push({ json: { ...f, aktion, text } });\n}\nreturn out;\n"
+        "jsCode": "// =====================================================================\n//  Datendiskrepanz-Sweep: faellige Aktion bestimmen + Text erzeugen\n//\n//  MUSS SYNCHRON GEHALTEN WERDEN mit feldmark_app/server/datendiskrepanz.js\n//  - dieselbe Logik existiert bewusst zweimal (Nutzerentscheidung vom\n//  2026-08-14: Duplizierung statt Deployment, siehe KONTEXT.md und die\n//  Sticky Note links). Aendert sich eine Frist-Schwelle oder ein\n//  Textbaustein dort, muss dieser Code-Node manuell nachgezogen werden.\n// =====================================================================\n\nconst NACHFASSUNG_1_TAGE = 3;\nconst NACHFASSUNG_2_TAGE = 6;\nconst FRISTWAHREND_SPAETESTENS_TAG = 10;\nconst SCHLIESSEN_NACH_TAGEN = 30;\n\nfunction tageSeit(datumWert) {\n  if (!datumWert) return null;\n  return Math.floor((Date.now() - new Date(datumWert).getTime()) / 86400000);\n}\nconst heute = () => new Date().toLocaleDateString('de-DE');\nconst datum = (iso) => new Date(iso).toLocaleDateString('de-DE');\n\nfunction erzeugeNachfassung(f, nummer) {\n  return [\n    `NACHFASSUNG ${nummer} zur Rückfrage vom ${datum(f.rueckfrage_gesendet_am)}`,\n    ``,\n    `Ihr Aktenzeichen: ${f.aktenzeichen}`,\n    `Unser Aktenzeichen: ${f.fall_id}`,\n    ``,\n    `Sehr geehrte Damen und Herren,`,\n    ``,\n    `wir haben Ihnen am ${datum(f.rueckfrage_gesendet_am)} eine Rückfrage zur Identifikation des Schuldners im oben genannten Vorgang übersandt und bislang keine Antwort erhalten.`,\n    ``,\n    `Bitte teilen Sie uns die angefragten Angaben kurzfristig mit.`,\n    ``,\n    `Mit freundlichen Grüßen`,\n    `Feldmark Bank AG`,\n    ``,\n    `— automatisch erzeugt am ${heute()} —`,\n  ].join('\\n');\n}\n\nfunction erzeugeFristwahrendeErklaerung(f) {\n  return [\n    `DRITTSCHULDNERERKLÄRUNG gemäß § 840 ZPO`,\n    ``,\n    `Ihr Aktenzeichen: ${f.aktenzeichen}`,\n    `Unser Aktenzeichen: ${f.fall_id}`,\n    `Zustellung des Schreibens: ${datum(f.zustelldatum)}`,\n    ``,\n    `Sehr geehrte Damen und Herren,`,\n    ``,\n    `zu dem oben genannten Vorgang erklären wir gemäß § 840 Abs. 1 ZPO wie folgt:`,\n    ``,\n    `1. Eine Geschäftsverbindung zu dem in Ihrem Schreiben bezeichneten Schuldner konnte anhand der uns vorliegenden Daten nicht festgestellt werden. Wir haben Sie hierzu am ${datum(f.rueckfrage_gesendet_am)} um ergänzende Angaben gebeten; eine für die Zuordnung ausreichende Antwort liegt bis heute nicht vor.`,\n    `2. Diese Erklärung wahrt die gesetzliche Frist. Sollte die Zuordnung anhand nachträglich eingehender Angaben gelingen, wird der Vorgang unverzüglich erneut geprüft und, falls zutreffend, eine ergänzende Erklärung nach § 840 ZPO abgegeben.`,\n    ``,\n    `Mit freundlichen Grüßen`,\n    `Feldmark Bank AG`,\n    ``,\n    `— automatisch erzeugt am ${heute()}, vor Versand durch Mitarbeiter zu bestätigen —`,\n  ].join('\\n');\n}\n\n// Fristende wie im § 840-ZPO-Node: Zustelldatum + 14 Kalendertage, bei\n// Wochenende/Feiertag auf den naechsten Werktag. Wird hier gebraucht, weil\n// feldmark.pfaendung_protokoll fristende/rest_tage als NOT NULL fuehrt und\n// der Fall-Verlauf im UI beide Werte anzeigt.\nconst FRIST_TAGE = 14;\nfunction ostersonntag(jahr) {\n  const a = jahr % 19, b = Math.floor(jahr / 100), c = jahr % 100;\n  const dd = Math.floor(b / 4), e = b % 4, f2 = Math.floor((b + 8) / 25);\n  const g = Math.floor((b - f2 + 1) / 3), h = (19 * a + b - dd - g + 15) % 30;\n  const i = Math.floor(c / 4), k = c % 4;\n  const l = (32 + 2 * e + 2 * i - h - k) % 7;\n  const m = Math.floor((a + 11 * h + 22 * l) / 451);\n  const monat = Math.floor((h + l - 7 * m + 114) / 31);\n  const tag = ((h + l - 7 * m + 114) % 31) + 1;\n  return new Date(Date.UTC(jahr, monat - 1, tag));\n}\nfunction isoTag(x) { return x.toISOString().slice(0, 10); }\nfunction plusTage(x, n) { const y = new Date(x); y.setUTCDate(y.getUTCDate() + n); return y; }\nfunction feiertageFuer(jahr) {\n  const o = ostersonntag(jahr);\n  const rel = (n) => isoTag(plusTage(o, n));\n  return [`${jahr}-01-01`, rel(-2), rel(1), `${jahr}-05-01`, rel(39), rel(50),\n          `${jahr}-10-03`, `${jahr}-12-25`, `${jahr}-12-26`];\n}\nfunction fristendeFuer(zustelldatum) {\n  let x = plusTage(new Date(String(zustelldatum).slice(0, 10) + 'T00:00:00Z'), FRIST_TAGE);\n  const jahr = x.getUTCFullYear();\n  const feiertage = [...feiertageFuer(jahr), ...feiertageFuer(jahr + 1)];\n  while (x.getUTCDay() === 0 || x.getUTCDay() === 6 || feiertage.includes(isoTag(x))) {\n    x = plusTage(x, 1);\n  }\n  return isoTag(x);\n}\n\nconst out = [];\nfor (const item of $input.all()) {\n  const f = item.json;\n\n  // Leerlauf-Schutz, siehe § 840-Node: ein leeres Item aus dem Loader darf den\n  // Lauf nicht abbrechen lassen.\n  if (!f.zustelldatum) {\n    out.push({ json: { ...f, aktion: 'keine', text: null } });\n    continue;\n  }\n\n  const tageSeitZustellung = tageSeit(f.zustelldatum);\n  const tageSeitRueckfrage = tageSeit(f.rueckfrage_gesendet_am);\n\n  let aktion = 'keine';\n  let text = null;\n\n  if (tageSeitZustellung >= FRISTWAHREND_SPAETESTENS_TAG && !f.fristwahrend_erklaert_am) {\n    aktion = 'fristwahrend_erklaert';\n    text = erzeugeFristwahrendeErklaerung(f);\n  } else if (tageSeitRueckfrage >= SCHLIESSEN_NACH_TAGEN) {\n    aktion = 'geschlossen_ungeklaert';\n  } else if (tageSeitRueckfrage >= NACHFASSUNG_2_TAGE && !f.nachfassung_2_gesendet_am) {\n    aktion = 'nachfassung_2';\n    text = erzeugeNachfassung(f, 2);\n  } else if (tageSeitRueckfrage >= NACHFASSUNG_1_TAGE && !f.nachfassung_1_gesendet_am) {\n    aktion = 'nachfassung_1';\n    text = erzeugeNachfassung(f, 1);\n  }\n\n  const fristende = fristendeFuer(f.zustelldatum);\n  const heuteUtc = new Date();\n  heuteUtc.setUTCHours(0, 0, 0, 0);\n  const restTage = Math.round(\n    (new Date(fristende + 'T00:00:00Z').getTime() - heuteUtc.getTime()) / 86400000\n  );\n\n  out.push({ json: { ...f, aktion, text, fristende, rest_tage: restTage } });\n}\nreturn out;\n"
       }
     },
     {
@@ -874,18 +883,100 @@
     },
     {
       "id": "2a2a60c1-729e-4b64-b741-34779ee35288",
-      "name": "Sweep-Status: erfolgreich",
+      "name": "Sweep-Status: erfolgreich (Ende des Laufs)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        336,
+        2064,
         620
       ],
       "parameters": {
         "operation": "executeQuery",
         "query": "INSERT INTO feldmark.sweep_status (sweep_name, status, zuletzt_gelaufen_am, meldung)\nVALUES ('pfaendung', 'erfolgreich', now(), NULL)\nON CONFLICT (sweep_name) DO UPDATE\nSET    status = 'erfolgreich', zuletzt_gelaufen_am = now(), meldung = NULL;",
         "options": {}
-      }
+      },
+      "notes": "Laeuft am ENDE des Sweeps, nicht mehr parallel zum Trigger. Vorher bedeutete 'erfolgreich' faktisch nur 'gestartet'. Bricht der Lauf ab, setzt der Fehler-Alert-Workflow (VASVi0WFdgXR2OSb) den Status auf 'fehler'.",
+      "notesInFlow": false
+    },
+    {
+      "id": "a1f0c2d4-0001-4b00-9000-000000000001",
+      "name": "Protokoll: Nachfassung 1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1328,
+        920
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO feldmark.pfaendung_protokoll\n       (fall_id, ereignis, fristende, rest_tage)\nVALUES ($1, $2, $3::date, $4::int);",
+        "options": {
+          "queryReplacement": "={{ [ $('Datendiskrepanz-Aktion bestimmen').item.json.fall_id, 'datendiskrepanz_nachfassung_1_gesendet', $('Datendiskrepanz-Aktion bestimmen').item.json.fristende, $('Datendiskrepanz-Aktion bestimmen').item.json.rest_tage ] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "notes": "Audit-Trail fuer den Datendiskrepanz-Zweig. Laeuft bewusst NACH dem UPDATE mit RETURNING: hat das UPDATE nichts getroffen (Aktion bereits erledigt), kommt hier kein Item an und es wird nichts protokolliert.",
+      "notesInFlow": false
+    },
+    {
+      "id": "a1f0c2d4-0002-4b00-9000-000000000002",
+      "name": "Protokoll: Nachfassung 2",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1328,
+        1040
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO feldmark.pfaendung_protokoll\n       (fall_id, ereignis, fristende, rest_tage)\nVALUES ($1, $2, $3::date, $4::int);",
+        "options": {
+          "queryReplacement": "={{ [ $('Datendiskrepanz-Aktion bestimmen').item.json.fall_id, 'datendiskrepanz_nachfassung_2_gesendet', $('Datendiskrepanz-Aktion bestimmen').item.json.fristende, $('Datendiskrepanz-Aktion bestimmen').item.json.rest_tage ] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "notes": "Audit-Trail fuer den Datendiskrepanz-Zweig. Laeuft bewusst NACH dem UPDATE mit RETURNING: hat das UPDATE nichts getroffen (Aktion bereits erledigt), kommt hier kein Item an und es wird nichts protokolliert.",
+      "notesInFlow": false
+    },
+    {
+      "id": "a1f0c2d4-0003-4b00-9000-000000000003",
+      "name": "Protokoll: fristwahrend erklaert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1808,
+        1160
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO feldmark.pfaendung_protokoll\n       (fall_id, ereignis, fristende, rest_tage)\nVALUES ($1, $2, $3::date, $4::int);",
+        "options": {
+          "queryReplacement": "={{ [ $('Datendiskrepanz-Aktion bestimmen').item.json.fall_id, 'datendiskrepanz_fristwahrend_erklaert', $('Datendiskrepanz-Aktion bestimmen').item.json.fristende, $('Datendiskrepanz-Aktion bestimmen').item.json.rest_tage ] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "notes": "Audit-Trail fuer den Datendiskrepanz-Zweig. Laeuft bewusst NACH dem UPDATE mit RETURNING: hat das UPDATE nichts getroffen (Aktion bereits erledigt), kommt hier kein Item an und es wird nichts protokolliert.",
+      "notesInFlow": false
+    },
+    {
+      "id": "a1f0c2d4-0004-4b00-9000-000000000004",
+      "name": "Protokoll: geschlossen ungeklaert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1568,
+        1320
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO feldmark.pfaendung_protokoll\n       (fall_id, ereignis, fristende, rest_tage)\nVALUES ($1, $2, $3::date, $4::int);",
+        "options": {
+          "queryReplacement": "={{ [ $('Datendiskrepanz-Aktion bestimmen').item.json.fall_id, 'datendiskrepanz_geschlossen_ungeklaert', $('Datendiskrepanz-Aktion bestimmen').item.json.fristende, $('Datendiskrepanz-Aktion bestimmen').item.json.rest_tage ] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "notes": "Audit-Trail fuer den Datendiskrepanz-Zweig. Laeuft bewusst NACH dem UPDATE mit RETURNING: hat das UPDATE nichts getroffen (Aktion bereits erledigt), kommt hier kein Item an und es wird nichts protokolliert.",
+      "notesInFlow": false
     }
   ],
   "connections": {
@@ -899,11 +990,6 @@
           },
           {
             "node": "Datendiskrepanz laden (Postgres)",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Sweep-Status: erfolgreich",
             "type": "main",
             "index": 0
           }
@@ -920,11 +1006,6 @@
           },
           {
             "node": "Datendiskrepanz laden (Postgres)",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Sweep-Status: erfolgreich",
             "type": "main",
             "index": 0
           }
@@ -1151,17 +1232,140 @@
           }
         ]
       ]
+    },
+    "Nachfassung 1 schreiben": {
+      "main": [
+        [
+          {
+            "node": "Protokoll: Nachfassung 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nachfassung 2 schreiben": {
+      "main": [
+        [
+          {
+            "node": "Protokoll: Nachfassung 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status setzen (fristwahrend)": {
+      "main": [
+        [
+          {
+            "node": "Protokoll: fristwahrend erklaert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status setzen (Abgeschlossen)": {
+      "main": [
+        [
+          {
+            "node": "Protokoll: geschlossen ungeklaert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status zurueckschreiben (Idempotenz)": {
+      "main": [
+        [
+          {
+            "node": "Sweep-Status: erfolgreich (Ende des Laufs)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kein Handlungsbedarf": {
+      "main": [
+        [
+          {
+            "node": "Sweep-Status: erfolgreich (Ende des Laufs)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Protokoll: Nachfassung 1": {
+      "main": [
+        [
+          {
+            "node": "Sweep-Status: erfolgreich (Ende des Laufs)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Protokoll: Nachfassung 2": {
+      "main": [
+        [
+          {
+            "node": "Sweep-Status: erfolgreich (Ende des Laufs)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Protokoll: fristwahrend erklaert": {
+      "main": [
+        [
+          {
+            "node": "Sweep-Status: erfolgreich (Ende des Laufs)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Protokoll: geschlossen ungeklaert": {
+      "main": [
+        [
+          {
+            "node": "Sweep-Status: erfolgreich (Ende des Laufs)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kein Handlungsbedarf (Datendiskrepanz)": {
+      "main": [
+        [
+          {
+            "node": "Sweep-Status: erfolgreich (Ende des Laufs)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
+  "pinData": {},
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate",
     "availableInMCP": true,
     "errorWorkflow": "VASVi0WFdgXR2OSb"
   },
-  "pinData": {},
   "meta": {
-    "instanceId": "feldmark-pfaendung-pilot"
+    "templateCredsSetupCompleted": true,
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
   },
   "tags": []
 }

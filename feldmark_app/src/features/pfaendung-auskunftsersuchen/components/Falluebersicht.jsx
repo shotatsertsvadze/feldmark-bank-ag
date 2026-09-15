@@ -4,6 +4,7 @@ import { berechneFrist, formatiereDatumUhrzeit } from "../fristlogik.js";
 import { DOKUMENTTYP_LABEL, DOKUMENTTYP_FARBE, EREIGNIS_LABEL, PFAENDUNGSBLOCK_TYPEN } from "../dokumenttypen.js";
 import Fristleiste from "./Fristleiste.jsx";
 import Stempel from "./Stempel.jsx";
+import SichtpruefungZeile from "./SichtpruefungZeile.jsx";
 import PfaendungErweiterung from "./PfaendungErweiterung.jsx";
 import AuskunftsersuchenErweiterung from "./AuskunftsersuchenErweiterung.jsx";
 import DatendiskrepanzFall from "./DatendiskrepanzFall.jsx";
@@ -190,33 +191,13 @@ export default function Falluebersicht({ reloadSignal }) {
               </div>
             ) : (
               <div>
-                {sichtpruefung.map((s) => {
-                  const nichtZugeordnet = s.einordnung === "nicht_zugeordnet";
-                  return (
-                  <div className="sichtpruefung-zeile" key={s.id}>
-                    <div className="sichtpruefung-zeile__stempel">
-                      <Stempel
-                        typLabel={DOKUMENTTYP_LABEL[s.dokumenttyp] || s.dokumenttyp}
-                        wert={nichtZugeordnet ? "Gehört nicht zu diesen Prozessen" : "Prüfen"}
-                        farbe={nichtZugeordnet ? "slate" : "ochre"}
-                      />
-                    </div>
-                    <div className="sichtpruefung-zeile__info">
-                      <span className="sichtpruefung-zeile__datei">{s.dateiname}</span>
-                      <p className="sichtpruefung-zeile__begruendung">
-                        {s.plausibilitaet_begruendung || "Konfidenz unterhalb der Autofall-Schwelle."}
-                      </p>
-                      <div className="sichtpruefung-zeile__gruende">
-                        {s.routing_gruende.map((g, i) => (
-                          <span className="badge badge--ochre" key={i}>
-                            {g}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                  );
-                })}
+                {sichtpruefung.map((s) => (
+                  <SichtpruefungZeile
+                    key={s.id}
+                    eintrag={s}
+                    onAbgeschlossen={() => setInternerReload((n) => n + 1)}
+                  />
+                ))}
               </div>
             )}
           </div>

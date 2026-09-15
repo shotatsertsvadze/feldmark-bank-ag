@@ -22,6 +22,28 @@ export async function sichtpruefungLaden() {
   return (await json(await fetch("/api/sichtpruefung"))).eintraege;
 }
 
+// Schliesst die Sichtpruefungs-Schleife: aus dem Warteschlangen-Eintrag
+// wird nach menschlicher Korrektur ein echter Fall.
+export async function sichtpruefungUebernehmen(id, { korrekturen, eingang, geprueftVon }) {
+  return json(
+    await fetch(`/api/sichtpruefung/${id}/uebernehmen`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ korrekturen, eingang, geprueft_von: geprueftVon }),
+    })
+  );
+}
+
+export async function sichtpruefungVerwerfen(id, { geprueftVon, grund }) {
+  return json(
+    await fetch(`/api/sichtpruefung/${id}/verwerfen`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ geprueft_von: geprueftVon, grund }),
+    })
+  );
+}
+
 export async function aktivitaetLaden(limit = 20) {
   return (await json(await fetch(`/api/aktivitaet?limit=${limit}`))).eintraege;
 }

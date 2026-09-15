@@ -67,6 +67,9 @@ feldmark_app/                       Express + React (Vite) — the only real app
     auskunftsersuchen_antwort.js      Deterministic Auskunftsersuchen response text generator
     datendiskrepanz.js                Text templates for the Datendiskrepanz follow-up workflow
     convert.js                        HEIC/HEIF → usable image conversion for uploads
+    fristlogik.js                     REFERENZKOPIE der n8n-Code-Nodes (Fristregeln) - wird von der App
+                                        NICHT importiert, nur getestet. Aenderung hier == Aenderung in beiden
+                                        n8n-Code-Nodes, siehe Datei-Kopf.
   src/
     App.jsx                           Router shell (react-router-dom) + Sidebar
     app/Sidebar.jsx                   Bank branding + feature navigation (currently one feature)
@@ -80,8 +83,9 @@ feldmark_*.sql                      Additive Postgres schema/migration files, on
                                      the matching .sql file must be updated too — they're known to drift
                                      (e.g. a status CHECK constraint value added live but not committed).
 
-feldmark_fristueberwachung*.json    n8n workflow exports (Pfändung sweep + its earlier "mock"/non-Postgres
-                                     variant). These are STATIC SNAPSHOTS, not the source of truth — the
+feldmark_*.json (n8n)               n8n workflow exports, one file per live workflow (Pfändung sweep,
+                                     Auskunftsersuchen sweep, Fehler-Alert, Google Sheets Sync — see
+                                     "Cloud resources"). These are STATIC SNAPSHOTS, not the source of truth — the
                                      live workflow runs in the n8n instance below and can be edited there
                                      directly without ever touching these files. They are known to go stale
                                      (documented fixes applied live were absent from the checked-in export
@@ -89,6 +93,10 @@ feldmark_fristueberwachung*.json    n8n workflow exports (Pfändung sweep + its 
                                      verify against the live workflow via the n8n API/UI before relying on
                                      or re-exporting it.
 
+docs/IST-PROZESS.md                 Der manuelle Ausgangsprozess (Schwachstellen, Mengengeruest).
+docs/SOLL-PROZESS.md                Zielprozess, jeder Schritt gegen den echten Code markiert
+                                     (umgesetzt / Naeherung / bewusste Grenze). Code-Kommentare
+                                     verweisen hierher statt auf das entfernte Sollkonzept-HTML.
 docs/code_review/                   Dated code-review reports with prioritized, checkable action items.
 docs/testmatrix.md                  Living, consolidated test matrix (not dated/snapshot like the code
                                      reviews) — update in place when new tests are run, don't fork a
@@ -119,11 +127,14 @@ belegerkennung/                     Local-only reference copy of an unrelated mo
 
 - GitHub (public): `github.com/shotatsertsvadze/feldmark-bank-ag`
 - Supabase project `ziwzymarlakoxrgdesvw` ("shotatsertsvadze's Project"), schema `feldmark`
-- n8n: `https://n8n.skill-sprinters.de`
-  - `Ix9jAYFWgh73fPv9` — Pfändung Fristüberwachung sweep (Postgres), daily 07:00
-  - `vAHlgWXDJXIS2cps` — Auskunftsersuchen Fristüberwachung sweep (Postgres), daily 07:15
-  - `VASVi0WFdgXR2OSb` — shared Fristüberwachung Fehler-Alert workflow (Error Trigger, attached to both sweeps above)
+- n8n: `https://n8n.skill-sprinters.de` — all four workflows are exported into the repo root
+  (re-exported from live on 2026-09-15, credentials stripped):
+  - `Ix9jAYFWgh73fPv9` — Pfändung Fristüberwachung sweep (Postgres), daily 07:00 → `feldmark_fristueberwachung_postgres.json`
+  - `vAHlgWXDJXIS2cps` — Auskunftsersuchen Fristüberwachung sweep (Postgres), daily 07:15 → `feldmark_auskunftsersuchen_fristueberwachung.json`
+  - `VASVi0WFdgXR2OSb` — shared Fristüberwachung Fehler-Alert workflow (Error Trigger, attached to both sweeps above) → `feldmark_fristueberwachung_fehler_alert.json`
+  - `puLEJK10AimqK4GA` — Google Sheets Sync (every 10 min, mirrors case rows into a Sheet for a read-only overview) → `feldmark_google_sheets_sync.json`
   - Postgres credential in n8n ("Postgres account 6") uses the Session Pooler — see "Database connection" above for why
+  - Export with `GET /api/v1/workflows/<id>` and strip each node's `credentials` key before committing.
 
 ## Architecture: data flow
 

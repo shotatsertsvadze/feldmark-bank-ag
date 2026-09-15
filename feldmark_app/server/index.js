@@ -10,14 +10,6 @@ import { istUnterstuetzterTyp, normalisiereFuerOcr } from "./convert.js";
 import { ocrDokument, klassifiziereUndExtrahiere, bestimmeRouting, PFAENDUNGSBLOCK_TYPEN, ERINNERUNG_TYPEN } from "./mistral.js";
 import { erzeugeDrittschuldnererklaerung } from "./pkonto_drittschuldner.js";
 import { erzeugeAuskunftsersuchenAntwort } from "./auskunftsersuchen_antwort.js";
-import {
-  erzeugeNachfassung,
-  erzeugeFristwahrendeErklaerung,
-  NACHFASSUNG_1_TAGE_NACH_RUECKFRAGE,
-  NACHFASSUNG_2_TAGE_NACH_RUECKFRAGE,
-  FRISTWAHREND_SPAETESTENS_TAG,
-  SCHLIESSEN_NACH_TAGEN_OHNE_ANTWORT,
-} from "./datendiskrepanz.js";
 import * as db from "./db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -166,12 +158,49 @@ async function verarbeiteDatei(file, eingang) {
     };
   } catch (fehler) {
     console.error(`[verarbeiteDatei] ${file.originalname}:`, fehler);
+    const fehlertext = String(fehler.message || fehler);
+    // Dead-Letter: ein gescheitertes Dokument darf nicht nur als Datei im
+    // uploads-Ordner zurueckbleiben - die Frist laeuft trotzdem. Schlaegt
+    // auch dieser Schreibvorgang fehl (DB weg), bleibt es beim reinen
+    // Fehlerergebnis, dann ist ohnehin nichts mehr persistierbar.
+    let inWarteschlange = false;
+    try {
+      await db.legeVerarbeitungsfehlerAn({
+        id: basis.id,
+        dateiname: basis.dateiname,
+        fehlertext,
+        ansichtUrl: basis.ansicht_url,
+        eingangsdatum: eingang.zustelldatum,
+      });
+      inWarteschlange = true;
+    } catch (schreibfehler) {
+      console.error(`[verarbeiteDatei] Dead-Letter fehlgeschlagen fuer ${file.originalname}:`, schreibfehler);
+    }
     return {
       ...basis,
       status: "fehler",
-      fehler: String(fehler.message || fehler),
+      fehler: fehlertext,
+      fall: inWarteschlange ? { angelegt: false, tabelle: "feldmark.sichtpruefung_warteschlange" } : undefined,
+      in_sichtpruefung: inWarteschlange,
     };
   }
+}
+
+/**
+ * Legt die Korrekturen eines Mitarbeiters ueber die gespeicherte
+ * Modellantwort. Bewusst auf die vier bekannten Bloecke begrenzt, damit aus
+ * dem Request keine beliebigen Felder in die Fallanlage sickern.
+ */
+function mischeKorrekturen(klassifikation, eingehendeKorrekturen) {
+  const basis = klassifikation || {};
+  const korrekturen = eingehendeKorrekturen || {};
+  return {
+    ...basis,
+    dokumenttyp: korrekturen.dokumenttyp || basis.dokumenttyp,
+    kopf: { ...(basis.kopf || {}), ...(korrekturen.kopf || {}) },
+    pfaendung: { ...(basis.pfaendung || {}), ...(korrekturen.pfaendung || {}) },
+    auskunftsersuchen: { ...(basis.auskunftsersuchen || {}), ...(korrekturen.auskunftsersuchen || {}) },
+  };
 }
 
 app.post("/api/klassifizieren", upload.array("schreiben", 20), async (req, res) => {
@@ -210,6 +239,96 @@ app.get("/api/sichtpruefung", async (req, res) => {
     res.json({ eintraege: await db.listeSichtpruefung() });
   } catch (fehler) {
     console.error("[GET /api/sichtpruefung]", fehler);
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+/**
+ * Sichtpruefung uebernehmen: aus einem Warteschlangen-Eintrag wird nach
+ * menschlicher Korrektur ein echter Fall. Schliesst die Schleife, die das
+ * Prozessdiagramm seit jeher zeichnet (niedrige Konfidenz -> Mensch
+ * bestaetigt/korrigiert -> Fallakte) und die bis 2026-09-15 fehlte.
+ *
+ * Korrekturen kommen als Teilobjekt `korrekturen` und werden ueber die
+ * gespeicherte Modellantwort gelegt - die Pflichtfeldpruefung in
+ * legePfaendungsfallAn()/legeAuskunftsersuchenFallAn() bleibt unveraendert
+ * zustaendig, es gibt hier keinen zweiten, schwaecheren Anlageweg.
+ */
+app.post("/api/sichtpruefung/:id/uebernehmen", async (req, res) => {
+  const { korrekturen = {}, eingang = {}, geprueft_von } = req.body || {};
+  if (!geprueft_von) {
+    return res.status(400).json({ fehler: "geprueft_von fehlt - wer die Sichtpruefung abschliesst, gehoert in den Audit-Trail." });
+  }
+  try {
+    const eintrag = await db.ermittleSichtpruefungEintrag(req.params.id);
+    if (!eintrag) return res.status(404).json({ fehler: "Sichtpruefungs-Eintrag nicht gefunden." });
+    if (eintrag.status !== "offen") {
+      return res.status(409).json({ fehler: `Eintrag ist bereits ${eintrag.status}.` });
+    }
+
+    const klassifikation = mischeKorrekturen(eintrag.klassifikation, korrekturen);
+    const istPfaendung = PFAENDUNGSBLOCK_TYPEN.includes(klassifikation.dokumenttyp);
+    if (!istPfaendung && klassifikation.dokumenttyp !== "auskunftsersuchen") {
+      return res.status(422).json({
+        fehler:
+          `Aus dokumenttyp "${klassifikation.dokumenttyp}" entsteht kein Fall. Korrigiere den Typ auf einen Pfaendungs- oder Auskunftsersuchen-Typ, oder verwirf den Eintrag.`,
+      });
+    }
+
+    const eingangsdaten = {
+      zustelldatum: eingang.zustelldatum || eintrag.eingangsdatum,
+      zustellkanal: eingang.zustellkanal || null,
+      bearbeiter_email: eingang.bearbeiter_email || null,
+      vertretung_email: eingang.vertretung_email || null,
+      vorgesetzte_email: eingang.vorgesetzte_email || null,
+    };
+    const ergebnis = istPfaendung
+      ? await db.legePfaendungsfallAn(klassifikation, eingangsdaten)
+      : await db.legeAuskunftsersuchenFallAn(klassifikation, eingangsdaten);
+    if (!ergebnis.angelegt) {
+      // Eintrag bleibt offen - fehlende Pflichtfelder sind korrigierbar.
+      return res.status(422).json({ fehler: ergebnis.grund });
+    }
+
+    await db.protokolliereAusSichtpruefungUebernommen(ergebnis.tabelle, ergebnis.fall_id, eingangsdaten.zustelldatum);
+    const geschlossen = await db.schliesseSichtpruefung(req.params.id, {
+      status: "uebernommen",
+      geprueftVon: geprueft_von,
+      fallId: ergebnis.fall_id,
+      notiz: korrekturen && Object.keys(korrekturen).length ? "mit Korrekturen uebernommen" : null,
+    });
+    res.json({ fall_id: ergebnis.fall_id, tabelle: ergebnis.tabelle, warteschlange_geschlossen: geschlossen });
+  } catch (fehler) {
+    console.error("[POST /api/sichtpruefung/:id/uebernehmen]", fehler);
+    res.status(500).json({ fehler: String(fehler.message || fehler) });
+  }
+});
+
+/** Sichtpruefung verwerfen: das Schreiben gehoert in keinen der beiden
+ *  Prozesse (Werbung, Fehlzustellung, fremdes Verfahren). Kein Fall, aber
+ *  ein nachvollziehbarer Abschluss statt eines ewig offenen Eintrags. */
+app.post("/api/sichtpruefung/:id/verwerfen", async (req, res) => {
+  const { geprueft_von, grund } = req.body || {};
+  if (!geprueft_von) {
+    return res.status(400).json({ fehler: "geprueft_von fehlt - wer die Sichtpruefung abschliesst, gehoert in den Audit-Trail." });
+  }
+  if (!grund || !String(grund).trim()) {
+    return res.status(400).json({ fehler: "grund fehlt - ein verworfenes Schreiben braucht eine Begruendung." });
+  }
+  try {
+    const eintrag = await db.ermittleSichtpruefungEintrag(req.params.id);
+    if (!eintrag) return res.status(404).json({ fehler: "Sichtpruefungs-Eintrag nicht gefunden." });
+    if (eintrag.status !== "offen") {
+      return res.status(409).json({ fehler: `Eintrag ist bereits ${eintrag.status}.` });
+    }
+    const geschlossen = await db.schliesseSichtpruefung(req.params.id, {
+      status: "verworfen",
+      geprueftVon: geprueft_von,
+      notiz: String(grund).trim(),
+    });
+    res.json({ verworfen: geschlossen });
+  } catch (fehler) {
+    console.error("[POST /api/sichtpruefung/:id/verwerfen]", fehler);
     res.status(500).json({ fehler: String(fehler.message || fehler) });
   }
 });
@@ -422,7 +541,7 @@ app.post("/api/faelle/:fallId/erklaerung/ablehnen", async (req, res) => {
 });
 
 // ===================================================================
-// Auskunftsersuchen-Erweiterung, Ast E (Sollkonzept 3.5) - Compliance-
+// Auskunftsersuchen-Erweiterung, Ast E (docs/SOLL-PROZESS.md) - Compliance-
 // Einbindung, strukturierte Antwort, bedingte Kontosperre. Routen-Struktur
 // bewusst 1:1 analog zum Pfaendungsblock oben.
 // ===================================================================
@@ -548,8 +667,8 @@ app.post("/api/faelle/:fallId/antwort/ablehnen", async (req, res) => {
   }
 });
 
-// E5: dokumentiert, ob eine Kontosperre gerechtfertigt ist. Per Sollkonzept
-// 2.5/E5 NUR bei eigener Rechtsgrundlage (Beschlagnahme/Arrest) - ein
+// E5: dokumentiert, ob eine Kontosperre gerechtfertigt ist. Per Soll-Prozess
+// (Ast E, E5) NUR bei eigener Rechtsgrundlage (Beschlagnahme/Arrest) - ein
 // reines Auskunftsersuchen darf hier nicht pauschal "true" setzen. Loest
 // keine echte Sperre aus (keine Kernbank-Anbindung), protokolliert nur die
 // getroffene Entscheidung.
@@ -576,7 +695,7 @@ app.post("/api/faelle/:fallId/sperre-entscheidung", async (req, res) => {
 });
 
 // ===================================================================
-// Datendiskrepanz-Workflow (Sollkonzept 3.1, Ast A) - siehe
+// Datendiskrepanz-Workflow (docs/SOLL-PROZESS.md, Ast A) - siehe
 // feldmark_pfaendung_datendiskrepanz_schema.sql und datendiskrepanz.js.
 // ===================================================================
 
@@ -617,67 +736,15 @@ app.post("/api/faelle/:fallId/datendiskrepanz/reaktivieren", async (req, res) =>
   }
 });
 
-const MS_PRO_TAG = 86_400_000;
-function tageSeit(datumWert) {
-  if (!datumWert) return null;
-  return Math.floor((Date.now() - new Date(datumWert).getTime()) / MS_PRO_TAG);
-}
-
-/**
- * Verarbeitet alle faelligen Aktionen ueber alle offenen Datendiskrepanz-
- * Faelle hinweg (A2 Nachfassungen, A3 fristwahrende Erklaerung, A4b
- * Schliessung nach 30 Tagen) - ein Aufruf pro Tag, analog zum bestehenden
- * n8n-Fristueberwachungs-Sweep. Bewusst als eigener REST-Endpunkt statt
- * direkt in n8n nachgebaut: die fristwahrende Erklaerung nutzt dieselbe
- * Text-Erzeugung wie die regulaere Drittschuldnererklaerung
- * (pkonto_drittschuldner.js) - dieselbe Logik zusaetzlich in einem n8n-
- * Code-Node zu duplizieren wuerde genau das Duplizierungsrisiko schaffen,
- * das der Code-Review in der vorherigen Nacht bei anderen Konstanten
- * bereits als Problem markiert hat. n8n ruft diesen Endpunkt taeglich auf
- * (Wiring noch nicht vorgenommen, siehe KONTEXT.md).
- *
- * Reihenfolge der Pruefung ist bewusst: fristwahrende Erklaerung zuerst
- * (sobald Tag 10 erreicht ist, erledigt sie die eigentliche Fristsicherung
- * und macht eine noch ausstehende Nachfassung obsolet), danach Schliessung
- * nach 30 Tagen, erst danach die beiden Nachfassungen.
- */
-app.post("/api/sweep/datendiskrepanz", async (req, res) => {
-  try {
-    const faelle = await db.holeFaelligeDatendiskrepanzen();
-    const aktionen = [];
-    for (const f of faelle) {
-      const tageSeitZustellung = tageSeit(f.zustelldatum);
-      const tageSeitRueckfrage = tageSeit(f.rueckfrage_gesendet_am);
-
-      if (tageSeitZustellung >= FRISTWAHREND_SPAETESTENS_TAG && !f.fristwahrend_erklaert_am) {
-        const fall = await db.ermittleFallMitErweiterung(f.fall_id);
-        const ergebnis = erzeugeFristwahrendeErklaerung(fall, { rueckfrage_gesendet_am: f.rueckfrage_gesendet_am });
-        await db.speichereErklaerung(f.fall_id, ergebnis.text, f.zustelldatum);
-        await db.markiereFristwahrendErklaert(f.fall_id, f.zustelldatum);
-        aktionen.push({ fall_id: f.fall_id, aktion: "fristwahrende_erklaerung_erzeugt" });
-      } else if (tageSeitRueckfrage >= SCHLIESSEN_NACH_TAGEN_OHNE_ANTWORT) {
-        await db.schliesseDatendiskrepanzUngeklaert(
-          f.fall_id,
-          "Keine ausreichende Antwort des Glaeubigers innerhalb von 30 Tagen - Zuordnung nicht moeglich.",
-          f.zustelldatum
-        );
-        aktionen.push({ fall_id: f.fall_id, aktion: "geschlossen_ungeklaert" });
-      } else if (tageSeitRueckfrage >= NACHFASSUNG_2_TAGE_NACH_RUECKFRAGE && !f.nachfassung_2_gesendet_am) {
-        const text = erzeugeNachfassung(f, f, 2);
-        await db.protokolliereNachfassung(f.fall_id, 2, text, f.zustelldatum);
-        aktionen.push({ fall_id: f.fall_id, aktion: "nachfassung_2_gesendet" });
-      } else if (tageSeitRueckfrage >= NACHFASSUNG_1_TAGE_NACH_RUECKFRAGE && !f.nachfassung_1_gesendet_am) {
-        const text = erzeugeNachfassung(f, f, 1);
-        await db.protokolliereNachfassung(f.fall_id, 1, text, f.zustelldatum);
-        aktionen.push({ fall_id: f.fall_id, aktion: "nachfassung_1_gesendet" });
-      }
-    }
-    res.json({ geprueft: faelle.length, aktionen });
-  } catch (fehler) {
-    console.error("[POST /api/sweep/datendiskrepanz]", fehler);
-    res.status(500).json({ fehler: String(fehler.message || fehler) });
-  }
-});
+// Frueher stand hier POST /api/sweep/datendiskrepanz - ein taeglicher Sweep
+// ueber alle offenen Datendiskrepanz-Faelle, als REST-Endpunkt gebaut, damit
+// n8n ihn aufruft statt die Logik zu duplizieren. Verdrahtet wurde er nie:
+// der Datendiskrepanz-Zweig wurde stattdessen direkt in einem n8n-Code-Node
+// nachgebaut (siehe Sticky-Note im Workflow-Export). Der Endpunkt war damit
+// toter, aber echt aussehender Code - zwei konkurrierende Wahrheiten fuer
+// dieselbe Regel. Entfernt am 2026-09-15; die Textbausteine in
+// server/datendiskrepanz.js bleiben unveraendert und sind weiterhin die
+// Vorlage fuer den n8n-Node.
 
 app.listen(PORT, () => {
   console.log(`Feldmark-Klassifikations-Server laeuft auf http://localhost:${PORT}`);

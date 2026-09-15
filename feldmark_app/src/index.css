@@ -943,6 +943,10 @@ p.view-lede {
   background: var(--oxblood);
   box-shadow: 0 0 0 3px var(--oxblood-bg);
 }
+.sweep-status__punkt--ochre {
+  background: var(--ochre);
+  box-shadow: 0 0 0 3px var(--ochre-bg);
+}
 .sweep-status__punkt--faint {
   background: var(--ink-faint);
 }
@@ -1069,6 +1073,46 @@ p.view-lede {
 }
 
 .erweiterung__aktionen input[type="text"]:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 1px;
+}
+
+/* Sichtpruefungs-Abschluss: mehrere beschriftete Felder statt der sonst
+   ueblichen zwei Inline-Eingaben - deshalb Rasterspalten statt einer Zeile. */
+.erweiterung__aktionen--spalten {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  align-items: end;
+  gap: 12px;
+}
+
+.erweiterung__aktionen--spalten label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+/* input[type="text"] wird oben mit min-width: 220px gesetzt und hat durch den
+   Attribut-Selektor die hoehere Spezifitaet - hier deshalb ebenfalls mit
+   Attribut ueberschreiben, sonst sprengen die Felder ihre Rasterspalte. */
+.erweiterung__aktionen--spalten input,
+.erweiterung__aktionen--spalten input[type="text"],
+.erweiterung__aktionen--spalten select {
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+  padding: 9px 11px;
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.erweiterung__aktionen--spalten input:focus-visible,
+.erweiterung__aktionen--spalten select:focus-visible {
   outline: 2px solid var(--brass);
   outline-offset: 1px;
 }

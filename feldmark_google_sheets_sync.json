@@ -1,0 +1,591 @@
+{
+  "name": "Feldmark Bank AG — Google Sheets Sync",
+  "nodes": [
+    {
+      "id": "39855be3-36bc-41b3-80d5-ee1d39601fa3",
+      "name": "Alle 10 Minuten",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        80,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "9668b272-71b6-4b74-9d93-89f1a397c670",
+      "name": "Pfändungsfälle laden (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        420,
+        80
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT f.fall_id,\n       f.aktenzeichen,\n       f.glaeubiger,\n       f.schuldner,\n       to_char(f.zustelldatum, 'YYYY-MM-DD') AS zustelldatum,\n       f.zustellkanal,\n       f.dokumenttyp,\n       f.status,\n       e.forderung_gesamt_eur,\n       e.guthaben_eur,\n       e.ist_p_konto,\n       e.ist_gemeinschaftskonto,\n       letztes.ereignis AS letztes_ereignis,\n       to_char(letztes.erzeugt_am, 'YYYY-MM-DD HH24:MI') AS letztes_ereignis_am\nFROM   feldmark.pfaendung_faelle f\nLEFT JOIN feldmark.pfaendung_erweiterung e ON e.fall_id = f.fall_id\nLEFT JOIN LATERAL (\n  SELECT ereignis, erzeugt_am\n  FROM   feldmark.pfaendung_protokoll p\n  WHERE  p.fall_id = f.fall_id\n  ORDER  BY p.erzeugt_am DESC\n  LIMIT  1\n) letztes ON true\nORDER BY f.zustelldatum DESC;",
+        "options": {}
+      }
+    },
+    {
+      "id": "5d4c08db-d902-478c-ab51-c12949bcaea7",
+      "name": "Pfändung → Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        720,
+        80
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1writxQKMhfX4-1hPdJig4zAOJKQ0N8raTddcHrQiiQQ",
+          "cachedResultName": "Feldmark Bank AG — Fallübersicht"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "656471166",
+          "cachedResultName": "Pfändung"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [
+            "fall_id"
+          ],
+          "value": {},
+          "schema": [
+            {
+              "id": "fall_id",
+              "displayName": "fall_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "aktenzeichen",
+              "displayName": "aktenzeichen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "glaeubiger",
+              "displayName": "glaeubiger",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "schuldner",
+              "displayName": "schuldner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "zustelldatum",
+              "displayName": "zustelldatum",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "zustellkanal",
+              "displayName": "zustellkanal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "dokumenttyp",
+              "displayName": "dokumenttyp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "forderung_gesamt_eur",
+              "displayName": "forderung_gesamt_eur",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "guthaben_eur",
+              "displayName": "guthaben_eur",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "ist_p_konto",
+              "displayName": "ist_p_konto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "ist_gemeinschaftskonto",
+              "displayName": "ist_gemeinschaftskonto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "letztes_ereignis",
+              "displayName": "letztes_ereignis",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "letztes_ereignis_am",
+              "displayName": "letztes_ereignis_am",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0e588ef9-4a15-4dc7-9705-259e7bef70cb",
+      "name": "Auskunftsersuchen laden (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        420,
+        320
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT f.fall_id,\n       f.aktenzeichen,\n       f.ausstellende_behoerde,\n       f.betroffene_person_name,\n       to_char(f.eingangsdatum, 'YYYY-MM-DD') AS eingangsdatum,\n       f.antwortfrist_tage,\n       f.zustellkanal,\n       f.status,\n       f.vertraulich,\n       letztes.ereignis AS letztes_ereignis,\n       to_char(letztes.erzeugt_am, 'YYYY-MM-DD HH24:MI') AS letztes_ereignis_am\nFROM   feldmark.auskunftsersuchen_faelle f\nLEFT JOIN LATERAL (\n  SELECT ereignis, erzeugt_am\n  FROM   feldmark.auskunftsersuchen_protokoll p\n  WHERE  p.fall_id = f.fall_id\n  ORDER  BY p.erzeugt_am DESC\n  LIMIT  1\n) letztes ON true\nORDER BY f.eingangsdatum DESC;",
+        "options": {}
+      }
+    },
+    {
+      "id": "d2f21e16-4731-474b-93b8-96a407e727da",
+      "name": "Auskunftsersuchen → Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        720,
+        320
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1writxQKMhfX4-1hPdJig4zAOJKQ0N8raTddcHrQiiQQ",
+          "cachedResultName": "Feldmark Bank AG — Fallübersicht"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1258555218",
+          "cachedResultName": "Auskunftsersuchen"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [
+            "fall_id"
+          ],
+          "value": {},
+          "schema": [
+            {
+              "id": "fall_id",
+              "displayName": "fall_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "aktenzeichen",
+              "displayName": "aktenzeichen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "ausstellende_behoerde",
+              "displayName": "ausstellende_behoerde",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "betroffene_person_name",
+              "displayName": "betroffene_person_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "eingangsdatum",
+              "displayName": "eingangsdatum",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "antwortfrist_tage",
+              "displayName": "antwortfrist_tage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "zustellkanal",
+              "displayName": "zustellkanal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "vertraulich",
+              "displayName": "vertraulich",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "letztes_ereignis",
+              "displayName": "letztes_ereignis",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "letztes_ereignis_am",
+              "displayName": "letztes_ereignis_am",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "6194fe3e-c212-49a0-a793-7c44b9759ed5",
+      "name": "Sichtprüfung laden (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        420,
+        560
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id::text AS eintrag_id,\n       dateiname,\n       dokumenttyp,\n       einordnung,\n       konfidenz_typ,\n       plausibilitaet_ok,\n       plausibilitaet_begruendung,\n       status,\n       to_char(eingangsdatum, 'YYYY-MM-DD') AS eingangsdatum,\n       to_char(erzeugt_am, 'YYYY-MM-DD HH24:MI') AS erzeugt_am\nFROM   feldmark.sichtpruefung_warteschlange\nORDER  BY erzeugt_am DESC;",
+        "options": {}
+      }
+    },
+    {
+      "id": "3961d840-cd87-43c9-bd68-190190c1390f",
+      "name": "Sichtprüfung → Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        720,
+        560
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1writxQKMhfX4-1hPdJig4zAOJKQ0N8raTddcHrQiiQQ",
+          "cachedResultName": "Feldmark Bank AG — Fallübersicht"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1508666999",
+          "cachedResultName": "Nicht zugeordnet"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [
+            "eintrag_id"
+          ],
+          "value": {},
+          "schema": [
+            {
+              "id": "eintrag_id",
+              "displayName": "eintrag_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dateiname",
+              "displayName": "dateiname",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "dokumenttyp",
+              "displayName": "dokumenttyp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "einordnung",
+              "displayName": "einordnung",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "konfidenz_typ",
+              "displayName": "konfidenz_typ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "plausibilitaet_ok",
+              "displayName": "plausibilitaet_ok",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "plausibilitaet_begruendung",
+              "displayName": "plausibilitaet_begruendung",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "eingangsdatum",
+              "displayName": "eingangsdatum",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "erzeugt_am",
+              "displayName": "erzeugt_am",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "69676926-a72a-42c3-9716-de4f10c76eb7",
+      "name": "Manuell testen",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        80,
+        500
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Alle 10 Minuten": {
+      "main": [
+        [
+          {
+            "node": "Pfändungsfälle laden (Postgres)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Auskunftsersuchen laden (Postgres)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sichtprüfung laden (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pfändungsfälle laden (Postgres)": {
+      "main": [
+        [
+          {
+            "node": "Pfändung → Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auskunftsersuchen laden (Postgres)": {
+      "main": [
+        [
+          {
+            "node": "Auskunftsersuchen → Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sichtprüfung laden (Postgres)": {
+      "main": [
+        [
+          {
+            "node": "Sichtprüfung → Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manuell testen": {
+      "main": [
+        [
+          {
+            "node": "Pfändungsfälle laden (Postgres)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Auskunftsersuchen laden (Postgres)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sichtprüfung laden (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": []
+}

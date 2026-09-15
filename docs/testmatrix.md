@@ -14,7 +14,7 @@ wurde und was nicht.
   herstellbar ist, siehe jeweilige Anmerkung)
 - ❌ **Offen** — bislang nicht getestet, echte Lücke
 
-Stand: 2026-08-27. Bei neuen Tests: Zeile ergänzen/aktualisieren statt eine zweite Matrix anzulegen.
+Stand: 2026-09-15. Bei neuen Tests: Zeile ergänzen/aktualisieren statt eine zweite Matrix anzulegen.
 
 ---
 
@@ -26,7 +26,7 @@ Stand: 2026-08-27. Bei neuen Tests: Zeile ergänzen/aktualisieren statt eine zwe
 | A2 | Auskunftsersuchen, hohe Konfidenz | Autofall angelegt | ✅ | wie A1 |
 | A3 | `konfidenz_typ`/`konfidenz_betrag` unter Schwelle | Sichtprüfung | ✅ | Konfidenzschwellen-Kalibrierung 2026-08-13, live in Sichtprüfungs-Warteschlange sichtbar |
 | A4 | `plausibilitaet_ok=false` trotz hoher Konfidenz | Sichtprüfung | ✅ | Plausibilitäts-Fallen (Wahllisten-Datei, Antwort_ZIS_2016) |
-| A5 | Modell liefert `konfidenz_typ`/`konfidenz_betrag` als `undefined` (fail-closed-Fix) | Zählt als „keine Konfidenz" → Sichtprüfung, nicht automatisches Grünlicht | ⚠️ | Fix in `bestimmeRouting()` (`?? 0`) code-verifiziert, aber kein realer Fall mit echtem `undefined` vom Modell provoziert — Mistral liefert die Felder in der Praxis bislang immer |
+| A5 | Modell liefert `konfidenz_typ`/`konfidenz_betrag` als `undefined` (fail-closed-Fix) | Zählt als „keine Konfidenz" → Sichtprüfung, nicht automatisches Grünlicht | ✅ | Seit 2026-09-15 durch `server/mistral.routing.test.js` abgedeckt (Tests „konfidenz_typ fehlt komplett", „fehlender Pfaendungsblock zaehlt als konfidenz_betrag 0") — kein echter Modell-Trigger nötig, die Regel ist eine reine Funktion |
 | A6 | Erinnerungsschreiben mit auffindbarem Aktenzeichen | Gegen bestehenden Fall gematcht, kein neuer Fall | ✅ | `KONTEXT.md` „Getestet & bestätigt" |
 | A7 | Erinnerungsschreiben, Aktenzeichen NICHT auffindbar | Sichtprüfung | ✅ | Seed-Fall `erinnerung_unbekannt.pdf`, live in Sichtprüfungs-Warteschlange |
 | A8 | Doppeltes Aktenzeichen | Kein zweiter Fall, Duplikat-Verdacht gemeldet | ✅ | Seed-Fall `Auskunftsersuchen_StA_fiktiv.pdf` gegen AE-2026-0118 |
@@ -129,3 +129,87 @@ z. B. ein unbearbeitetes iPhone-Foto — dann `node --test server/convert.test.j
 lassen, die zwei übersprungenen Tests greifen automatisch). Die übrigen wurden zumindest einmal
 durch Code-Konstruktion abgeleitet oder sind aus technischen Gründen (E9) nicht isoliert
 auslösbar.
+
+---
+
+## Automatisierte Suite — Lauf vom 2026-09-15
+
+`cd feldmark_app && npm test` (Node v23.11.0), vollstaendiger Lauf mit gefuellter `.env`:
+**80 Tests, 78 grün, 2 übersprungen, 0 rot** (Dauer ~13 s).
+
+> Nach diesem Lauf kam im Review noch ein Test dazu
+> (`auskunftsersuchen_antwort.test.js`: "der Wert eines zurueckgehaltenen Punktes taucht
+> nirgends im Text auf"). Der naechste Lauf muss daher 81 Tests zeigen — die Zahl oben ist
+> der tatsaechlich beobachtete Lauf, nicht hochgerechnet.
+
+| Datei | Tests | Deckt ab | DB nötig |
+|---|---|---|---|
+| `server/convert.test.js` | 7 (2 skip) | MIME-Erkennung, Passthrough, WEBP→PNG, Fehlerfall (A10) | nein |
+| `server/fristlogik.test.js` | 14 | Fristzonen-Logik + berechnete Feiertage (2026/2027/2028) — **Referenzkopie** der n8n-Code-Node, siehe Datei-Kopf | nein |
+| `server/mistral.routing.test.js` | 17 (neu) | `bestimmeRouting()`: jede Fail-Closed-Regel, fehlende Konfidenzwerte (A5), Erinnerung mit Treffer in der falschen Tabelle | nein |
+| `server/pkonto_drittschuldner.test.js` | 16 (neu) | alle vier Guthaben-Szenarien (B1–B4), alle 422-Pfade (B5), § 907 ZPO und Kontoart-Kombinationen | nein |
+| `server/auskunftsersuchen_antwort.test.js` | 9 (neu, +1 nachgetragen) | nur freigegebene Punkte im Antworttext, zurückgehaltene Punkte samt ihrer Werte, beide fail-closed-Gründe | nein |
+| `server/db.audit-trail.test.js` | 4 | Protokollzeilen je Statuswechsel | **ja** |
+| `server/hitl-gates.test.js` | 3 | Vier-Augen-Gate 409 + Override gegen die echte HTTP-Route (B8, B9) | **ja** |
+| `server/dashboard.test.js` | 2 | `listeOffeneFaelle()` inkl. letztem Ereignis | **ja** |
+| `server/mistral.transport.test.js` | 5 (neu) | Timeout und der eine Wiederholungsversuch gegen einen lokalen HTTP-Server (429/5xx wiederholen, 4xx sofort durchreichen) | nein |
+| `server/sichtpruefung-loop.test.js` | 5 (neu) | Sichtprüfung übernehmen/verwerfen gegen die echten HTTP-Routen: Fallanlage aus Korrekturen, 422 bei fehlenden Pflichtfeldern, 409 beim zweiten Abschluss, Audit-Ereignis | **ja** |
+
+Die zwei übersprungenen Tests sind die HEIC-Decode-Tests (fehlendes Fixture, siehe A10).
+
+**Verhalten ohne `DATABASE_URL`:** die drei DB-Tests überspringen sich sauber
+(`test(..., { skip: SKIP_GRUND })`), der Pool wird erst bei Bedarf erzeugt. Verifiziert am
+2026-09-15 mit `DATABASE_URL="" node --test server/dashboard.test.js` → 2 skipped, 0 failed.
+Ein frischer Clone ohne Secrets bekommt also 54 echte grüne Tests statt Verbindungsfehler.
+
+**Beim Lauf gefundener und behobener Fehler (2026-09-15):** durch die neue Transaktion
+um die Fallanlage teilen sich alle Protokollzeilen eines Falls denselben `now()`-Zeitstempel;
+`ORDER BY erzeugt_am DESC` allein war damit nicht mehr eindeutig und `letztes_ereignis`
+sprang. Behoben durch `id` als Tiebreak in allen vier Protokoll-Abfragen (`server/db.js`)
+— `dashboard.test.js` hat genau das aufgedeckt.
+
+**Backfill-Check 2026-09-15** (nach dem Fix von `protokolliere()`, das die AE-Frist vorher hart
+mit 14 Tagen rechnete): alle acht bestehenden Auskunftsersuchen-Fälle haben tatsächlich
+`antwortfrist_tage = 14`, der Bug hatte also live keine falsche Zeile erzeugt. Die zehn von
+`fristende` abweichenden Protokollzeilen stammen aus dem n8n-Sweep (Werktagsverschiebung
+§ 161 StPO) und sind korrekt — kein Backfill nötig.
+
+### n8n-Sweeps: live geaendert und verifiziert (2026-09-15)
+
+Alle vier Workflows liegen jetzt als Export im Repo (credentials entfernt):
+`feldmark_fristueberwachung_postgres.json`,
+`feldmark_auskunftsersuchen_fristueberwachung.json`,
+`feldmark_fristueberwachung_fehler_alert.json`,
+`feldmark_google_sheets_sync.json`.
+
+**Audit-Trail im Datendiskrepanz-Zweig** (vorher schrieb der Zweig live keine
+einzige Protokollzeile) — vier neue Postgres-Knoten, je nach dem UPDATE mit
+`RETURNING` verdrahtet, damit ein wirkungsloses UPDATE auch nichts protokolliert.
+Belegt durch drei echte Sweep-Laeufe gegen die Produktions-DB:
+
+| Lauf (UTC) | Testfall | Erwartetes Ereignis | Ergebnis |
+|---|---|---|---|
+| 15:35 | Rueckfrage 4 Tage alt | `datendiskrepanz_nachfassung_1_gesendet` | geschrieben 15:35:00.569 |
+| 15:39 | Zustellung 11 Tage alt | `datendiskrepanz_fristwahrend_erklaert` | geschrieben 15:39:00.676 |
+| 15:39 | Rueckfrage 31 Tage alt | `datendiskrepanz_geschlossen_ungeklaert` | geschrieben 15:39:00.779 |
+| 15:42 | Nachfassung 1 bereits raus, Rueckfrage 7 Tage alt | `datendiskrepanz_nachfassung_2_gesendet` | geschrieben 15:42:00.482 |
+| 15:39 | Idempotenz: Fall aus Lauf 1 erneut gesweept | **keine** zweite Nachfassung-1-Zeile | keine Dublette |
+
+Testdaten (PF-2026-0596/0597/0598) nach dem Test wieder geloescht.
+
+**`sweep_status` bedeutet jetzt "fertig", nicht "gestartet"**: der Abschluss-Knoten
+haengt in beiden Sweeps an den Endknoten beider Zweige statt am Trigger. Im Lauf
+15:39 wurde er um 15:39:00.801 geschrieben — nach der letzten Protokollzeile
+(.779). Damit der Status auch an einem Tag ohne offene Faelle geschrieben wird,
+haben die Loader `alwaysOutputData` und beide Code-Nodes einen Leerlauf-Zweig
+(ein leeres Item lief vorher in `toDate(undefined)` → RangeError; lokal
+nachgestellt und behoben).
+
+**Feiertage** werden in beiden Code-Nodes ueber die Osterformel berechnet statt
+als 2026-Liste gepflegt — dieselbe Funktion wie in `server/fristlogik.js`,
+gegen 2026/2027/2028 geprueft (Karfreitag 2027 = 26.03., Fristende 12.03.2027 +
+14 Tage verschiebt sich korrekt auf den 30.03.). AE-Sweep-Lauf 15:47 gruen.
+
+**Google Sheets Sync** (`puLEJK10AimqK4GA`, alle 10 Minuten) ist nur exportiert,
+nicht geaendert — er spiegelt personenbezogene Falldaten in ein Google Sheet und
+bleibt der schwaechste DSGVO-Punkt (siehe `docs/demo-drehbuch.md`).

@@ -38,6 +38,11 @@ export default function ErgebnisKarte({ ergebnis, animiertesStempel }) {
             <span className="ergebnis-karte__datei">{ergebnis.dateiname}</span>
           </div>
           <p className="ergebnis-karte__zeile">{ergebnis.fehler}</p>
+          <p className="ergebnis-karte__zeile">
+            {ergebnis.in_sichtpruefung
+              ? "In die Sichtprüfungs-Warteschlange gestellt — dort manuell erfassen, die Frist läuft weiter."
+              : "Konnte nicht gespeichert werden — Dokument bitte erneut hochladen."}
+          </p>
         </div>
       </div>
     );

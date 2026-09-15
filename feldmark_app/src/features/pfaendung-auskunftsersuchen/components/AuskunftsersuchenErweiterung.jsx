@@ -196,7 +196,7 @@ export default function AuskunftsersuchenErweiterung({ fallId, onFallGeaendert }
       {erw.vertraulich && (
         <p className="erweiterung__warnhinweis">
           <strong>Vertraulich — keine Kundeninformation.</strong> Dieses Ersuchen darf der betroffenen Person nicht
-          mitgeteilt werden (§§ 161, 161a StPO — Vertraulichkeitsproblem, siehe Sollkonzept 2.5).
+          mitgeteilt werden (§§ 161, 161a StPO — Vertraulichkeitsproblem, siehe docs/SOLL-PROZESS.md, Ast E).
         </p>
       )}
 

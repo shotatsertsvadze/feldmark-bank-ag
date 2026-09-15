@@ -1,12 +1,12 @@
 /**
- * Datendiskrepanz-Workflow (Sollkonzept Abschnitt 3.1, "Ast A —
+ * Datendiskrepanz-Workflow (docs/SOLL-PROZESS.md, "Ast A -
  * Datendiskrepanz, parallel zur Frist").
  *
  * Deckt in DIESEM System den Fall ab: ein Dokument ist mit ausreichender
  * Konfidenz ein Pfaendungsschreiben/eine Einziehungs-/Ueberweisungsverfuegung,
  * Aktenzeichen und Glaeubiger sind bekannt, aber der Schuldnername fehlt in
  * der Extraktion. Siehe feldmark_pfaendung_datendiskrepanz_schema.sql fuer
- * die Begruendung dieser Scope-Praezisierung gegenueber dem Sollkonzept
+ * die Begruendung dieser Scope-Praezisierung gegenueber dem Soll-Prozess
  * (kein echter Kernbank-Kundenstamm-Abgleich vorhanden).
  *
  * Bewusst deterministisch, kein LLM - gleiches Prinzip wie
@@ -15,10 +15,10 @@
  * Aussage der Bank.
  */
 
-// Sollkonzept 3.1, A1: Antwortfrist fuer die Rueckfrage an den Glaeubiger.
+// Soll-Prozess Ast A, Schritt A1: Antwortfrist fuer die Rueckfrage an den Glaeubiger.
 export const ANTWORTFRIST_WERKTAGE = 3;
 
-// Sollkonzept 3.1, A2: Nachfassungen am Tag 3 und Tag 6 NACH DER RUECKFRAGE
+// Soll-Prozess Ast A, Schritt A2: Nachfassungen am Tag 3 und Tag 6 NACH DER RUECKFRAGE
 // (nicht nach Zustelldatum). A3: fristwahrende Erklaerung spaetestens
 // Tag 10 der GESAMTFRIST (ab Zustelldatum), unabhaengig vom Klaerungsstand.
 // A4: Schliessung nach 30 Tagen ohne Antwort, gerechnet ab der Rueckfrage.

@@ -6,6 +6,16 @@ const SWEEP_LABEL = {
   auskunftsersuchen: "Auskunftsersuchen",
 };
 
+// Beide Sweeps laufen taeglich (07:00 / 07:15). Alles aelter als 26 Stunden
+// ist damit ein ausgefallener Lauf und nicht mehr "gruen" - ohne diese
+// Pruefung zeigt die Kachel auch nach Tagen Stillstand den letzten Erfolg.
+const MAX_ALTER_STUNDEN = 26;
+
+function istVeraltet(iso) {
+  if (!iso) return false;
+  return (Date.now() - new Date(iso).getTime()) / 3600000 > MAX_ALTER_STUNDEN;
+}
+
 function relativeZeit(iso) {
   const datum = new Date(iso);
   const heute = new Date();
@@ -50,8 +60,9 @@ export default function SweepStatus() {
           <ul className="sweep-status__liste">
             {Object.keys(SWEEP_LABEL).map((name) => {
               const s = nachName[name];
-              const erfolgreich = s?.status === "erfolgreich";
-              const punktFarbe = !s ? "faint" : erfolgreich ? "moss" : "oxblood";
+              const veraltet = istVeraltet(s?.zuletzt_gelaufen_am);
+              const erfolgreich = s?.status === "erfolgreich" && !veraltet;
+              const punktFarbe = !s ? "faint" : veraltet ? "ochre" : erfolgreich ? "moss" : "oxblood";
               return (
                 <li className="sweep-status__eintrag" key={name}>
                   <span className={`sweep-status__punkt sweep-status__punkt--${punktFarbe}`} aria-hidden="true" />
@@ -60,6 +71,11 @@ export default function SweepStatus() {
                       <span className="sweep-status__name">{SWEEP_LABEL[name]}</span>
                       <span className="sweep-status__zeit">{s ? relativeZeit(s.zuletzt_gelaufen_am) : "noch nie gelaufen"}</span>
                     </div>
+                    {veraltet && (
+                      <p className="sweep-status__meldung">
+                        Letzter Lauf ist älter als {MAX_ALTER_STUNDEN} Stunden — Sweep prüfen, Fristen laufen ungeprüft weiter.
+                      </p>
+                    )}
                     {s && !erfolgreich && s.meldung && <p className="sweep-status__meldung">{s.meldung}</p>}
                   </div>
                 </li>

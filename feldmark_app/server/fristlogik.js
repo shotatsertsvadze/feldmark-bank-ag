@@ -28,17 +28,58 @@
 export const VORLAUF_ERINNERUNG_2_TAGE = 3;
 export const VORLAUF_ESKALATION_TAGE = 1;
 
-export const FEIERTAGE_2026 = [
-  "2026-01-01",
-  "2026-04-03",
-  "2026-04-06",
-  "2026-05-01",
-  "2026-05-14",
-  "2026-05-25",
-  "2026-10-03",
-  "2026-12-25",
-  "2026-12-26",
-];
+/**
+ * Ostersonntag nach der Gauss'schen Osterformel. Basis fuer die vier
+ * beweglichen bundeseinheitlichen Feiertage.
+ */
+function ostersonntag(jahr) {
+  const a = jahr % 19;
+  const b = Math.floor(jahr / 100);
+  const c = jahr % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const monat = Math.floor((h + l - 7 * m + 114) / 31);
+  const tag = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(jahr, monat - 1, tag));
+}
+
+/**
+ * Bundeseinheitliche Feiertage eines Jahres. Wird berechnet statt gepflegt -
+ * eine fest eingetragene Liste galt bis 2026 und haette ab 2027 stillschweigend
+ * nur noch Wochenenden erkannt, ein Fristende waere dann faelschlich auf einen
+ * Feiertag gefallen. Laendergesetzliche Feiertage (Fronleichnam, Reformationstag
+ * usw.) bewusst nicht enthalten: sie gelten nicht bundesweit und der
+ * Gerichtsstandort ist hier nicht bekannt.
+ */
+export function bundesweiteFeiertage(jahr) {
+  const ostern = ostersonntag(jahr);
+  const relativZuOstern = (tage) => iso(addDays(ostern, tage));
+  return [
+    `${jahr}-01-01`, // Neujahr
+    relativZuOstern(-2), // Karfreitag
+    relativZuOstern(1), // Ostermontag
+    `${jahr}-05-01`, // Tag der Arbeit
+    relativZuOstern(39), // Christi Himmelfahrt
+    relativZuOstern(50), // Pfingstmontag
+    `${jahr}-10-03`, // Tag der Deutschen Einheit
+    `${jahr}-12-25`,
+    `${jahr}-12-26`,
+  ];
+}
+
+/** Feiertage fuer das Jahr eines Datums und das Folgejahr - eine Frist kann
+ *  ueber den Jahreswechsel laufen. */
+function feiertageUm(datum) {
+  const jahr = datum.getUTCFullYear();
+  return [...bundesweiteFeiertage(jahr), ...bundesweiteFeiertage(jahr + 1)];
+}
 
 function toDate(s) {
   return new Date(`${String(s).slice(0, 10)}T00:00:00Z`);
@@ -79,7 +120,8 @@ function normalisiereGesendet(gesendet) {
  * @param {string[]} eingabe.statusErledigt - Statuswerte, bei denen die Ueberwachung endet
  * @param {string[]|string} eingabe.erinnerungenGesendet - bereits gesendete Marker
  * @param {Date} [eingabe.heute] - fuer Tests injizierbar, Default = jetzt
- * @param {string[]} [eingabe.feiertage] - Default FEIERTAGE_2026
+ * @param {string[]} [eingabe.feiertage] - Default: berechnete bundesweite
+ *   Feiertage des Fristjahres und des Folgejahres
  * @returns {{ aktion: "erinnerung_1"|"erinnerung_2"|"eskalation"|"fristversaeumnis"|"keine", fristende: string, restTage: number, grund: string }}
  */
 export function ermittleFristAktion({
@@ -89,11 +131,11 @@ export function ermittleFristAktion({
   statusErledigt,
   erinnerungenGesendet,
   heute = new Date(),
-  feiertage = FEIERTAGE_2026,
+  feiertage = null,
 }) {
   const start = toDate(startdatumIso);
   const fristRoh = addDays(start, fristTage);
-  const frist = naechsterWerktag(fristRoh, feiertage);
+  const frist = naechsterWerktag(fristRoh, feiertage || feiertageUm(fristRoh));
 
   const h = new Date(heute);
   h.setUTCHours(0, 0, 0, 0);

@@ -1,0 +1,136 @@
+{
+  "name": "Feldmark Bank AG — Fristueberwachung: Fehler-Alert",
+  "nodes": [
+    {
+      "id": "eed15e45-1093-43c0-aef4-6a4e6d0d6670",
+      "name": "Workflow-Fehler aufgetreten",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        96,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "e6fd1789-c800-44fc-9d10-47082d25be30",
+      "name": "Alert aufbereiten",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        336,
+        300
+      ],
+      "parameters": {
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1",
+              "name": "betreff",
+              "value": "=[FRISTUEBERWACHUNG FEHLGESCHLAGEN] {{ $json.workflow?.name }}",
+              "type": "string"
+            },
+            {
+              "id": "e2",
+              "name": "nachricht",
+              "value": "=Der Fristueberwachungs-Sweep \"{{ $json.workflow?.name }}\" ist fehlgeschlagen und wurde NICHT vollstaendig ausgefuehrt.\n\nFehler: {{ $json.execution?.error?.message ?? \"unbekannt\" }}\nAusfuehrung: {{ $json.execution?.url ?? $json.execution?.id }}\nZeitpunkt: {{ $now.toISO() }}\n\nAn diesem Tag wurden moeglicherweise keine Erinnerungen/Eskalationen fuer offene Faelle versandt - manuell pruefen, ob ein Nachlauf noetig ist.",
+              "type": "string"
+            },
+            {
+              "id": "e3",
+              "name": "prioritaet",
+              "value": "kritisch",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "edadb71a-6753-405b-8226-7a92572ff9c0",
+      "name": "Alert-Versand (Platzhalter)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        576,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "341b38ca-3865-42fe-9e0c-9ff76cc6261c",
+      "name": "Sticky Note 394e9f13",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        48,
+        80
+      ],
+      "parameters": {
+        "content": "## Gemeinsamer Fehler-Workflow fuer beide Fristueberwachungen\n\nAls n8n-Error-Workflow an \"Nickel — Pfaendung: Fristueberwachung (Postgres)\" und \"Feldmark Bank AG — Auskunftsersuchen: Fristueberwachung (Postgres)\" gehaengt (Workflow-Settings -> Error Workflow).\n\nSchlaegt der taegliche Sweep komplett fehl (z.B. DB-Verbindung down), bekommt sonst niemand etwas mit - der naechste Lauf ist erst am Folgetag, und bis dahin sind fuer ALLE offenen Faelle keine Erinnerungen/Eskalationen rausgegangen.\n\n**Weiterhin Platzhalter** wie beim Rest des Projekts: Alert-Versand ist noOp, `betreff`/`nachricht` sind fertig aufbereitet.",
+        "color": 4,
+        "width": 620,
+        "height": 260
+      }
+    },
+    {
+      "id": "296bc04f-91d2-4f03-83b5-2801da45fca3",
+      "name": "Sweep-Status: fehler",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        336,
+        480
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO feldmark.sweep_status (sweep_name, status, zuletzt_gelaufen_am, meldung)\nVALUES ($1, 'fehler', now(), $2)\nON CONFLICT (sweep_name) DO UPDATE\nSET    status = 'fehler', zuletzt_gelaufen_am = now(), meldung = $2;",
+        "options": {
+          "queryReplacement": "={{ [$json.workflow?.name?.includes('Auskunftsersuchen') ? 'auskunftsersuchen' : 'pfaendung', $json.execution?.error?.message ?? 'Unbekannter Fehler'] }}",
+          "queryBatching": "independently"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Workflow-Fehler aufgetreten": {
+      "main": [
+        [
+          {
+            "node": "Alert aufbereiten",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sweep-Status: fehler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert aufbereiten": {
+      "main": [
+        [
+          {
+            "node": "Alert-Versand (Platzhalter)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "tags": []
+}

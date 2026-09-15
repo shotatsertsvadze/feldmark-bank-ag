@@ -7,19 +7,23 @@
 --  dasselbe Muster wie ueberall sonst im Projekt (n8n schreibt, die App
 --  liest nur ueber Postgres).
 --
---  Bewusst OPTIMISTISCH: Jeder Sweep (Pfaendung, Auskunftsersuchen)
---  schreibt "erfolgreich" direkt beim Start, parallel zur eigentlichen
---  Sweep-Logik - nicht erst am Ende, weil die bestehenden Workflows viele
---  parallele Endzweige haben (Erinnerung/Eskalation/Datendiskrepanz-
---  Aeste) und ein echter "alles fertig"-Knoten dafuer alle Zweige ueber
---  Merge-Nodes zusammenfuehren muesste - ein invasiver Umbau eines
---  bereits laufenden, taeglich aktiven Workflows fuer wenig Mehrwert.
---  Schlaegt der Lauf danach tatsaechlich fehl, ueberschreibt der
---  gemeinsame Fehler-Alert-Workflow (VASVi0WFdgXR2OSb, feuert ueber
---  n8ns Error-Trigger-Mechanismus bei jedem Fehler in einer der beiden
---  Sweeps) denselben Datensatz auf "fehler" - fuer einen einmal taeglich
---  laufenden Batch-Job ist die kurze Zeitspanne zwischen "gestartet" und
---  "wirklich fertig" praktisch vernachlaessigbar.
+--  Wird am ENDE des Laufs geschrieben (seit 2026-09-15): der
+--  Abschluss-Knoten haengt in beiden Sweeps an den Endknoten aller
+--  Zweige (Erinnerung/Eskalation/Datendiskrepanz), nicht mehr parallel
+--  am Trigger. Bis dahin war der Schreibvorgang bewusst optimistisch und
+--  "erfolgreich" bedeutete faktisch nur "gestartet" - das war als
+--  vertretbar eingestuft, ist aber fuer eine Betriebsanzeige irrefuehrend.
+--  Damit der Status auch an einem Tag ohne offene Faelle geschrieben
+--  wird, liefern die Loader-Knoten alwaysOutputData und beide Code-Nodes
+--  haben einen Leerlauf-Zweig (aktion = 'keine').
+--
+--  Schlaegt ein Lauf fehl, ueberschreibt der gemeinsame Fehler-Alert-
+--  Workflow (VASVi0WFdgXR2OSb, feuert ueber n8ns Error-Trigger bei jedem
+--  Fehler in einer der beiden Sweeps) denselben Datensatz auf "fehler".
+--  Bleibt zuletzt_gelaufen_am aelter als 26 Stunden, markiert die UI den
+--  Lauf zusaetzlich als veraltet (SweepStatus.jsx) - das faengt den Fall
+--  ab, dass ein Sweep gar nicht erst startet und deshalb weder Erfolg
+--  noch Fehler meldet.
 --
 --  Einmalig ausfuehren. Getestet gegen PostgreSQL 15/16.
 -- =====================================================================
@@ -34,10 +38,13 @@ CREATE TABLE IF NOT EXISTS feldmark.sweep_status (
 );
 
 COMMENT ON TABLE feldmark.sweep_status IS
-    'Wird von den n8n-Sweeps selbst geschrieben (nicht von der App) - optimistisch
-     "erfolgreich" direkt beim Start jedes Laufs, vom gemeinsamen Fehler-Alert-
-     Workflow auf "fehler" ueberschrieben, falls der Lauf danach tatsaechlich
-     abbricht.';
+    'Wird von den n8n-Sweeps selbst geschrieben (nicht von der App). Seit
+     2026-09-15 schreibt der Abschluss-Knoten am ENDE des Laufs - "erfolgreich"
+     heisst damit auch erfolgreich. Vorher lief der Schreibvorgang parallel zum
+     Trigger und bedeutete faktisch nur "gestartet". Bricht ein Lauf ab, setzt
+     der gemeinsame Fehler-Alert-Workflow den Status auf "fehler"; ist
+     zuletzt_gelaufen_am aelter als 26 Stunden, markiert die UI den Lauf als
+     veraltet (SweepStatus.jsx).';
 
 -- ---------------------------------------------------------------------
 -- Nuetzliche Abfragen

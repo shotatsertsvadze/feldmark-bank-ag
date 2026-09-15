@@ -105,7 +105,7 @@ export default function Prozessdiagramm() {
             <text x="128" y="332" textAnchor="middle" fontFamily="'IBM Plex Mono', monospace" fontSize="10" fill={FARBE.ochre}>
               nein / unsicher
             </text>
-            <Box x={20} y={380} w={280} h={60} titel="Sichtprüfung" untertitel="ein Mensch bestätigt oder korrigiert" rand={FARBE.ochre} fuellung="#f2e3c4" />
+            <Box x={20} y={380} w={280} h={60} titel="Sichtprüfung" untertitel="Mensch korrigiert & übernimmt — oder verwirft" rand={FARBE.ochre} fuellung="#f2e3c4" />
             <Pfeil punkte="160,440 160,500 320,500" />
 
             {/* Ja -> direkt runter */}
