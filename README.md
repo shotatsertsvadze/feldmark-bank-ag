@@ -9,9 +9,9 @@
 
 Ein Ende-zu-Ende-System, das zeigt, wie eine Bank den Posteingang für **Kontopfändungen** und **behördliche Auskunftsersuchen** von einem papierbasierten, personenabhängigen Prozess in einen digitalen, prüfbaren Workflow überführt — von der OCR-Erkennung eines eingehenden Schreibens bis zur automatisierten Fristüberwachung mit Eskalationslogik.
 
-Entstanden als Abschlussprojekt im Digitalisierungsmanager-Bootcamp, angewendet auf einen realen Prozess aus eigener Fintech-Praxis.
+Eigenprojekt während der Weiterbildung zum Digitalisierungsmanager (2026), angewendet auf einen realen Prozess aus eigener Fintech-Praxis. Ursprünglich als Abschlussprojekt geplant; eingereicht wurde ein anderes Projekt (Finance Operations Automation).
 
-**Projektstatus:** in Bearbeitung — die Bootcamp-Einreichung (Präsentation, Tests, Live-Demo) steht noch aus. Fachlich sind beide Prozesse (Pfändung und Auskunftsersuchen) inklusive aller Soll-Verzweigungen, Vier-Augen-Gates, Ablehnen-Pfad und automatisierter Fristüberwachung bereits umgesetzt; der konsolidierte, ehrlich gekennzeichnete Teststand (live verifiziert vs. nur code-abgeleitet vs. noch offen) steht in `docs/testmatrix.md`. Offen sind außerdem noch der reale Versandkanal und ein optionaler Self-Service-Statuslink (Details unter [Bewusste Grenzen](#bewusste-grenzen)).
+**Projektstatus:** Portfolio-Prototyp, Stand September 2026. Fachlich sind beide Prozesse (Pfändung und Auskunftsersuchen) inklusive aller Soll-Verzweigungen, Vier-Augen-Gates, Ablehnen-Pfad und automatisierter Fristüberwachung bereits umgesetzt; der konsolidierte, ehrlich gekennzeichnete Teststand (live verifiziert vs. nur code-abgeleitet vs. noch offen) steht in `docs/testmatrix.md`. Nicht umgesetzt sind der reale Versandkanal und ein optionaler Self-Service-Statuslink (Details unter [Bewusste Grenzen](#bewusste-grenzen)).
 
 <p align="center">
   <img src="docs/screenshots/falluebersicht.png" alt="Fallübersicht mit Fristüberwachung, Sweep-Status und Aktivitäts-Feed" width="880">
@@ -138,4 +138,4 @@ Transparenz statt Understatement — das hier ist explizit **nicht** gebaut, mit
 
 ## Über dieses Projekt
 
-Abschlussprojekt im Digitalisierungsmanager-Bootcamp, zugleich Portfolio-Stück — ein lauffähiges System für einen realen Prozess aus eigener Fintech-Praxis, kein Demo-Gerüst. Gebaut, getestet und iteriert von **Shota Tsertsvadze**.
+Eigenprojekt aus der Digitalisierungsmanager-Weiterbildung und Portfolio-Stück — ein lauffähiges System für einen realen Prozess aus eigener Fintech-Praxis, kein Demo-Gerüst. Gebaut, getestet und iteriert von **Shota Tsertsvadze**.
